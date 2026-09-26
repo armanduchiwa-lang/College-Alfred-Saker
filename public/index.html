@@ -168,10 +168,16 @@ async function appelApi(chemin, options){
 async function chargerDepuisServeur(){
   try{
     const distant = await appelApi('/api/data');
-    DATA = fusionnerDonnees(DATA, distant);
+    const fusionne = fusionnerDonnees(DATA, distant);
+    const aChange = JSON.stringify(fusionne) !== JSON.stringify(DATA);
+    DATA = fusionne;
     connecteServeur = true;
     derniereSynchro = new Date();
-    render();
+    // On ne redessine la page que si des données ont réellement changé,
+    // pour ne pas effacer une saisie en cours (champ pas encore validé).
+    const enTrainDeSaisir = document.activeElement && ['INPUT','TEXTAREA','SELECT'].includes(document.activeElement.tagName);
+    if(aChange && !enTrainDeSaisir) render();
+    else majBarreStatut();
   }catch(e){
     connecteServeur = false;
     console.warn('Chargement impossible', e);
