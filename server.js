@@ -6,6 +6,7 @@
 const express = require('express');
 const path = require('path');
 const { MongoClient } = require('mongodb');
+const bcrypt = require('bcryptjs');
 
 const PORT = process.env.PORT || 3000;
 const MONGODB_URI = process.env.MONGODB_URI;
@@ -34,7 +35,7 @@ async function demarrerMongo() {
 function donneesVides() {
   return {
     meta: { titre: 'Suivi Assiduité Enseignants', etablissement: '', seuilAlerte: 3, updatedAt: new Date().toISOString() },
-    classes: [], enseignants: [], emploiDuTemps: [], caes: [], cpes: [], affectations: [], releves: []
+    cycles: [], classes: [], enseignants: [], emploiDuTemps: [], caes: [], cpes: [], affectations: [], releves: []
   };
 }
 
@@ -53,6 +54,7 @@ function fusionnerDonnees(local, distant) {
   const meta = (distant.meta && distant.meta.updatedAt > local.meta.updatedAt) ? distant.meta : local.meta;
   return {
     meta,
+    cycles: fusionnerCollection(local.cycles, distant.cycles),
     classes: fusionnerCollection(local.classes, distant.classes),
     enseignants: fusionnerCollection(local.enseignants, distant.enseignants),
     emploiDuTemps: fusionnerCollection(local.emploiDuTemps, distant.emploiDuTemps),
@@ -71,6 +73,29 @@ function verifierCode(req, res, next) {
   next();
 }
 
+/* ---------- Mots de passe CPE ---------- */
+// Ne jamais envoyer le hash au client : on le retire et on ajoute juste un indicateur booléen.
+function masquerMotsDePasse(data) {
+  const clone = JSON.parse(JSON.stringify(data));
+  clone.cpes = (clone.cpes || []).map(c => {
+    const { motDePasseHash, ...reste } = c;
+    return { ...reste, aMotDePasse: !!motDePasseHash };
+  });
+  return clone;
+}
+// Après une fusion, si le résultat n'a plus de hash pour un CPE qui en avait un stocké,
+// on le restaure (le client n'a jamais le hash, donc il ne doit jamais l'effacer).
+function preserverHashs(fusionne, stocke) {
+  fusionne.cpes = (fusionne.cpes || []).map(c => {
+    if (!c.motDePasseHash) {
+      const ancien = (stocke.cpes || []).find(x => x.id === c.id);
+      if (ancien && ancien.motDePasseHash) return { ...c, motDePasseHash: ancien.motDePasseHash };
+    }
+    return c;
+  });
+  return fusionne;
+}
+
 /* ---------- Routes ---------- */
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
@@ -82,7 +107,7 @@ app.get('/api/data', verifierCode, async (req, res) => {
       await collection.insertOne(doc);
     }
     const { _id, ...data } = doc;
-    res.json(data);
+    res.json(masquerMotsDePasse(data));
   } catch (e) {
     console.error(e);
     res.status(500).json({ erreur: 'Erreur serveur.' });
@@ -95,10 +120,50 @@ app.post('/api/sync', verifierCode, async (req, res) => {
     if (!envoye) return res.status(400).json({ erreur: 'Données manquantes.' });
     let doc = await collection.findOne({ _id: 'suivi' });
     const stocke = doc ? (({ _id, ...d }) => d)(doc) : donneesVides();
-    const fusionne = fusionnerDonnees(stocke, envoye);
+    let fusionne = fusionnerDonnees(stocke, envoye);
+    fusionne = preserverHashs(fusionne, stocke);
     fusionne.meta.updatedAt = new Date().toISOString();
     await collection.updateOne({ _id: 'suivi' }, { $set: fusionne }, { upsert: true });
-    res.json(fusionne);
+    res.json(masquerMotsDePasse(fusionne));
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erreur: 'Erreur serveur.' });
+  }
+});
+
+app.post('/api/cpe/mot-de-passe', verifierCode, async (req, res) => {
+  try {
+    const { cpeId, motDePasse } = req.body || {};
+    if (!cpeId || !motDePasse || motDePasse.length < 4) {
+      return res.status(400).json({ erreur: 'Mot de passe invalide (4 caractères minimum).' });
+    }
+    let doc = await collection.findOne({ _id: 'suivi' });
+    if (!doc) return res.status(404).json({ erreur: 'Aucune donnée.' });
+    const idx = (doc.cpes || []).findIndex(c => c.id === cpeId);
+    if (idx === -1) return res.status(404).json({ erreur: 'CPE introuvable.' });
+    const hash = bcrypt.hashSync(motDePasse, 10);
+    doc.cpes[idx].motDePasseHash = hash;
+    doc.cpes[idx].updatedAt = new Date().toISOString();
+    await collection.updateOne({ _id: 'suivi' }, { $set: { cpes: doc.cpes, 'meta.updatedAt': new Date().toISOString() } });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ erreur: 'Erreur serveur.' });
+  }
+});
+
+app.post('/api/cpe/connexion', verifierCode, async (req, res) => {
+  try {
+    const { cpeId, motDePasse } = req.body || {};
+    let doc = await collection.findOne({ _id: 'suivi' });
+    const cpe = doc && (doc.cpes || []).find(c => c.id === cpeId);
+    if (!cpe) return res.status(404).json({ erreur: 'Profil introuvable.' });
+    if (!cpe.motDePasseHash) {
+      return res.status(403).json({ erreur: "Aucun mot de passe défini pour ce profil. Demandez à un CPE de le définir dans Configuration → CAE & CPE." });
+    }
+    const ok = bcrypt.compareSync(motDePasse || '', cpe.motDePasseHash);
+    if (!ok) return res.status(403).json({ erreur: 'Mot de passe incorrect.' });
+    res.json({ ok: true });
   } catch (e) {
     console.error(e);
     res.status(500).json({ erreur: 'Erreur serveur.' });
