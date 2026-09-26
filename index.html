@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Suivi Assiduité Enseignants</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#1e3a5f">
+<link rel="apple-touch-icon" href="/icon-192.png">
+<style>
+  :root{
+    --bleu:#1e3a5f; --bleu-clair:#e8f0fa; --accent:#2563eb;
+    --vert:#15803d; --orange:#b45309; --rouge:#b91c1c;
+    --gris:#f4f5f7; --gris-bordure:#d8dce3; --texte:#1f2430;
+  }
+  *{box-sizing:border-box;}
+  body{font-family:"Segoe UI",Arial,sans-serif;margin:0;background:var(--gris);color:var(--texte);}
+  header{background:var(--bleu);color:#fff;padding:14px 20px;display:flex;flex-wrap:wrap;align-items:center;gap:12px;justify-content:space-between;}
+  header h1{font-size:1.25rem;margin:0;}
+  header .sub{font-size:.8rem;opacity:.85;}
+  .barre-statut{display:flex;gap:10px;align-items:center;font-size:.8rem;flex-wrap:wrap;}
+  .badge{padding:3px 9px;border-radius:12px;background:rgba(255,255,255,.15);}
+  nav{display:flex;background:#16283f;flex-wrap:wrap;}
+  nav button{background:none;border:none;color:#cfd8e6;padding:12px 18px;cursor:pointer;font-size:.9rem;border-bottom:3px solid transparent;}
+  nav button.actif{color:#fff;border-bottom:3px solid var(--accent);background:#1e3a5f;}
+  nav button:hover{color:#fff;}
+  main{padding:20px;max-width:1100px;margin:0 auto;}
+  .carte{background:#fff;border:1px solid var(--gris-bordure);border-radius:10px;padding:18px;margin-bottom:18px;}
+  .carte h2{margin-top:0;font-size:1.05rem;color:var(--bleu);}
+  .ligne{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px;}
+  label{font-size:.82rem;color:#555;display:block;margin-bottom:3px;}
+  input,select,textarea,button{font-family:inherit;font-size:.9rem;}
+  input[type=text],input[type=date],input[type=time],input[type=number],select,textarea{
+    padding:7px 9px;border:1px solid var(--gris-bordure);border-radius:6px;background:#fff;}
+  textarea{width:100%;min-height:50px;}
+  .btn{background:var(--accent);color:#fff;border:none;padding:8px 14px;border-radius:6px;cursor:pointer;}
+  .btn:hover{background:#1d4ed8;}
+  .btn.secondaire{background:#fff;color:var(--accent);border:1px solid var(--accent);}
+  .btn.danger{background:#fff;color:var(--rouge);border:1px solid var(--rouge);}
+  .btn.petit{padding:4px 9px;font-size:.78rem;}
+  table{width:100%;border-collapse:collapse;font-size:.85rem;}
+  th,td{padding:7px 8px;border-bottom:1px solid var(--gris-bordure);text-align:left;}
+  th{background:var(--bleu-clair);color:var(--bleu);font-weight:600;}
+  tr:hover td{background:#fafbff;}
+  .tag{padding:3px 9px;border-radius:12px;font-size:.78rem;font-weight:600;display:inline-block;}
+  .tag.P{background:#dcfce7;color:var(--vert);}
+  .tag.R{background:#fef3c7;color:var(--orange);}
+  .tag.A{background:#fee2e2;color:var(--rouge);}
+  .statut-boutons{display:flex;gap:6px;}
+  .statut-boutons button{border:1px solid var(--gris-bordure);background:#fff;padding:6px 12px;border-radius:6px;cursor:pointer;font-size:.82rem;}
+  .statut-boutons button.sel-P.actif{background:var(--vert);color:#fff;border-color:var(--vert);}
+  .statut-boutons button.sel-R.actif{background:var(--orange);color:#fff;border-color:var(--orange);}
+  .statut-boutons button.sel-A.actif{background:var(--rouge);color:#fff;border-color:var(--rouge);}
+  .note{font-size:.8rem;color:#666;}
+  .alerte{background:#fee2e2;color:var(--rouge);padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:.85rem;}
+  .info{background:#e0f2fe;color:#075985;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:.85rem;}
+  .grille-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+  @media(max-width:700px){.grille-2{grid-template-columns:1fr;}}
+  .sous-onglets{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap;}
+  .sous-onglets button{padding:6px 12px;border-radius:6px;border:1px solid var(--gris-bordure);background:#fff;cursor:pointer;font-size:.82rem;}
+  .sous-onglets button.actif{background:var(--bleu);color:#fff;border-color:var(--bleu);}
+  .surbrillance{background:#fee2e2 !important;}
+  .cache{display:none !important;}
+  .petit-texte{font-size:.78rem;color:#777;}
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1 id="titreEtablissement">Suivi Assiduité Enseignants</h1>
+    <div class="sub" id="sousTitre">Collège — CAE / CPE</div>
+  </div>
+  <div class="barre-statut">
+    <span class="badge" id="badgeProfil">Aucun profil sélectionné</span>
+    <span class="badge" id="badgeSync">Connexion...</span>
+    <button class="btn secondaire petit" id="btnRecharger">🔄 Recharger</button>
+  </div>
+</header>
+<nav id="navPrincipale"></nav>
+<main id="contenu"></main>
+
+<script>
+(function(){
+"use strict";
+
+/* ---------- Utilitaires ---------- */
+function uid(){
+  if(window.crypto && crypto.randomUUID) return crypto.randomUUID();
+  return 'id-'+Date.now()+'-'+Math.random().toString(16).slice(2);
+}
+function maintenant(){ return new Date().toISOString(); }
+const JOURS = ['Dimanche','Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
+const JOURS_ECOLE = ['Lundi','Mardi','Mercredi','Jeudi','Vendredi','Samedi'];
+function jourDeDate(dateStr){
+  const d = new Date(dateStr+'T00:00:00');
+  return JOURS[d.getDay()];
+}
+function fmtDate(dateStr){
+  const d = new Date(dateStr+'T00:00:00');
+  return d.toLocaleDateString('fr-FR',{weekday:'long',day:'2-digit',month:'2-digit',year:'numeric'});
+}
+function todayStr(){
+  const d = new Date();
+  return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+}
+function echap(s){
+  return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/* ---------- État ---------- */
+function donneesVides(){
+  return {
+    meta:{ titre:'Suivi Assiduité Enseignants', etablissement:'', seuilAlerte:3, updatedAt:maintenant() },
+    classes:[], enseignants:[], emploiDuTemps:[], caes:[], cpes:[], affectations:[], releves:[]
+  };
+}
+let DATA = donneesVides();
+let PROFIL = null; // {role:'CAE'|'CPE', id, nom}
+let ONGLET = 'accueil';
+let SOUS_ONGLET_CONFIG = 'classes';
+let codeAcces = '';
+let connecteServeur = false;
+let derniereSynchro = null;
+let synchroEnCours = false;
+
+/* ---------- Fusion (merge) des données ---------- */
+function fusionnerCollection(a, b){
+  const map = new Map();
+  (a||[]).forEach(x=>map.set(x.id,x));
+  (b||[]).forEach(x=>{
+    const existant = map.get(x.id);
+    if(!existant || (x.updatedAt||'') > (existant.updatedAt||'')) map.set(x.id,x);
+  });
+  return Array.from(map.values());
+}
+function fusionnerDonnees(local, distant){
+  if(!distant) return local;
+  const meta = (distant.meta && distant.meta.updatedAt>local.meta.updatedAt) ? distant.meta : local.meta;
+  return {
+    meta,
+    classes: fusionnerCollection(local.classes, distant.classes),
+    enseignants: fusionnerCollection(local.enseignants, distant.enseignants),
+    emploiDuTemps: fusionnerCollection(local.emploiDuTemps, distant.emploiDuTemps),
+    caes: fusionnerCollection(local.caes, distant.caes),
+    cpes: fusionnerCollection(local.cpes, distant.cpes),
+    affectations: fusionnerCollection(local.affectations, distant.affectations),
+    releves: fusionnerCollection(local.releves, distant.releves)
+  };
+}
+
+/* ---------- Code d'accès (mémorisé sur l'appareil) ---------- */
+function demanderCodeAcces(){
+  const enregistre = localStorage.getItem('suivi_assiduite_code') || '';
+  const saisi = prompt("Code d'accès de l'établissement (donné par le CPE) :", enregistre);
+  codeAcces = (saisi||'').trim();
+  try{ localStorage.setItem('suivi_assiduite_code', codeAcces); }catch(e){}
+}
+
+/* ---------- Synchronisation avec le serveur ---------- */
+async function appelApi(chemin, options){
+  const opts = options || {};
+  opts.headers = Object.assign({'Content-Type':'application/json','x-access-code':codeAcces}, opts.headers||{});
+  const rep = await fetch(chemin, opts);
+  if(rep.status===401){ connecteServeur=false; majBarreStatut(); throw new Error('Code d\'accès invalide'); }
+  if(!rep.ok) throw new Error('Erreur serveur ('+rep.status+')');
+  return rep.json();
+}
+async function chargerDepuisServeur(){
+  try{
+    const distant = await appelApi('/api/data');
+    DATA = fusionnerDonnees(DATA, distant);
+    connecteServeur = true;
+    derniereSynchro = new Date();
+    render();
+  }catch(e){
+    connecteServeur = false;
+    console.warn('Chargement impossible', e);
+    majBarreStatut();
+  }
+}
+async function envoyerVersServeur(){
+  try{
+    const fusionne = await appelApi('/api/sync', {method:'POST', body: JSON.stringify({data: DATA})});
+    DATA = fusionne;
+    connecteServeur = true;
+    derniereSynchro = new Date();
+  }catch(e){
+    connecteServeur = false;
+    console.warn('Synchronisation impossible, les données restent en local pour le moment', e);
+  }
+  majBarreStatut();
+}
+function demarrerPolling(){
+  setInterval(async ()=>{
+    if(synchroEnCours) return;
+    synchroEnCours = true;
+    try{ await chargerDepuisServeur(); }
+    finally{ synchroEnCours = false; }
+  }, 7000);
+}
+async function persister(){
+  DATA.meta.updatedAt = maintenant();
+  try{ localStorage.setItem('suivi_assiduite_secours', JSON.stringify(DATA)); }catch(e){}
+  await envoyerVersServeur();
+}
+
+/* ---------- Barre de statut ---------- */
+function majBarreStatut(){
+  const bp = document.getElementById('badgeProfil');
+  bp.textContent = PROFIL ? (PROFIL.role+' — '+PROFIL.nom) : 'Aucun profil sélectionné';
+  const bs = document.getElementById('badgeSync');
+  if(connecteServeur){
+    const h = derniereSynchro || new Date();
+    bs.textContent = 'Connecté — synchro '+String(h.getHours()).padStart(2,'0')+':'+String(h.getMinutes()).padStart(2,'0');
+  }else{
+    bs.textContent = 'Hors ligne — nouvelle tentative en cours...';
+  }
+  document.getElementById('titreEtablissement').textContent = DATA.meta.etablissement ? DATA.meta.etablissement : 'Suivi Assiduité Enseignants';
+  document.getElementById('sousTitre').textContent = DATA.meta.etablissement ? 'Suivi Assiduité Enseignants — CAE / CPE' : 'Collège — CAE / CPE';
+}
+
+/* ---------- Navigation ---------- */
+const ONGLETS = [
+  {id:'accueil', label:'Accueil'},
+  {id:'config', label:'Configuration (CPE)'},
+  {id:'saisie', label:'Saisie (CAE)'},
+  {id:'suivi', label:'Suivi (CPE)'}
+];
+function construireNav(){
+  const nav = document.getElementById('navPrincipale');
+  nav.innerHTML = ONGLETS.map(o=>`<button data-onglet="${o.id}" class="${ONGLET===o.id?'actif':''}">${o.label}</button>`).join('');
+  nav.querySelectorAll('button').forEach(b=>{
+    b.addEventListener('click', ()=>{ ONGLET = b.dataset.onglet; render(); });
+  });
+}
+
+/* ---------- Rendu principal ---------- */
+function render(){
+  construireNav();
+  majBarreStatut();
+  const c = document.getElementById('contenu');
+  if(ONGLET==='accueil') c.innerHTML = vueAccueil();
+  else if(ONGLET==='config') c.innerHTML = vueConfig();
+  else if(ONGLET==='saisie') c.innerHTML = vueSaisie();
+  else if(ONGLET==='suivi') c.innerHTML = vueSuivi();
+  attacherEvenements();
+}
+
+/* ---------- Vue Accueil ---------- */
+function vueAccueil(){
+  let html = `<div class="carte"><h2>Bienvenue</h2>
+  <p>Cet outil permet aux <strong>CAE</strong> de relever la présence, les retards et les absences des enseignants dans les classes qui leur sont assignées, et aux <strong>CPE</strong> de configurer les classes, l'emploi du temps, les affectations et de suivre les relevés.</p>
+  <p class="note">Ce fichier doit être placé sur un emplacement réseau accessible à tous (CAE et CPE). Chaque personne connecte ce même fichier via le bouton « 📂 Connecter le fichier partagé » en haut de la page (Chrome ou Edge recommandés).</p></div>`;
+
+  html += `<div class="carte"><h2>Qui êtes-vous ?</h2>`;
+  if(PROFIL){
+    html += `<p>Connecté en tant que <strong>${echap(PROFIL.role)} — ${echap(PROFIL.nom)}</strong>.</p>
+    <button class="btn secondaire" id="btnChangerProfil">Changer de profil</button>`;
+  }else{
+    html += `<div class="ligne">
+      <div><label>Je suis</label>
+      <select id="selRole">
+        <option value="CAE">CAE</option>
+        <option value="CPE">CPE</option>
+      </select></div>
+      <div><label>Mon nom</label>
+      <select id="selNomProfil"></select></div>
+      <div style="align-self:flex-end;"><button class="btn" id="btnValiderProfil">Continuer</button></div>
+    </div>
+    <p class="petit-texte">Aucun mot de passe n'est demandé. Si votre nom n'apparaît pas dans la liste, demandez à un CPE de l'ajouter dans Configuration → CAE &amp; CPE.</p>`;
+  }
+  html += `</div>`;
+
+  html += `<div class="carte"><h2>Connexion au serveur</h2>
+    <p class="note">Les données sont stockées sur un serveur en ligne : tout le monde peut se connecter depuis n'importe où (WiFi ou données mobiles), pas besoin d'être sur le même réseau.</p>
+    <button class="btn secondaire" id="btnChangerCode">🔑 Changer le code d'accès</button></div>`;
+  return html;
+}
+
+/* ---------- Vue Configuration (CPE) ---------- */
+const SOUS_ONGLETS_CONFIG = [
+  {id:'general', label:'Général'},
+  {id:'classes', label:'Classes'},
+  {id:'enseignants', label:'Enseignants'},
+  {id:'edt', label:'Emploi du temps'},
+  {id:'personnes', label:'CAE & CPE'},
+  {id:'affectations', label:'Affectations'}
+];
+function vueConfig(){
+  let html = `<div class="sous-onglets">`+SOUS_ONGLETS_CONFIG.map(s=>`<button data-sc="${s.id}" class="${SOUS_ONGLET_CONFIG===s.id?'actif':''}">${s.label}</button>`).join('')+`</div>`;
+  if(SOUS_ONGLET_CONFIG==='general') html += vueConfigGeneral();
+  else if(SOUS_ONGLET_CONFIG==='classes') html += vueConfigClasses();
+  else if(SOUS_ONGLET_CONFIG==='enseignants') html += vueConfigEnseignants();
+  else if(SOUS_ONGLET_CONFIG==='edt') html += vueConfigEDT();
+  else if(SOUS_ONGLET_CONFIG==='personnes') html += vueConfigPersonnes();
+  else if(SOUS_ONGLET_CONFIG==='affectations') html += vueConfigAffectations();
+  return html;
+}
+function vueConfigGeneral(){
+  return `<div class="carte"><h2>Paramètres généraux</h2>
+    <div class="ligne">
+      <div><label>Nom de l'établissement</label><input type="text" id="champEtablissement" value="${echap(DATA.meta.etablissement)}"></div>
+      <div><label>Seuil d'alerte (absences/retards cumulés)</label><input type="number" id="champSeuil" min="1" value="${DATA.meta.seuilAlerte}" style="width:90px;"></div>
+      <div style="align-self:flex-end;"><button class="btn" id="btnSauverGeneral">Enregistrer</button></div>
+    </div></div>`;
+}
+function vueConfigClasses(){
+  const lignes = DATA.classes.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
+  let html = `<div class="carte"><h2>Classes</h2>
+    <div class="ligne"><div><label>Nouvelle classe</label><input type="text" id="champNouvClasse" placeholder="ex: 6ème A"></div>
+    <div style="align-self:flex-end;"><button class="btn" id="btnAjoutClasse">Ajouter</button></div></div>
+    <table><thead><tr><th>Classe</th><th></th></tr></thead><tbody>`;
+  lignes.forEach(cl=>{
+    html += `<tr><td><input type="text" data-id="${cl.id}" class="champEditClasse" value="${echap(cl.nom)}"></td>
+    <td><button class="btn danger petit" data-suppr-classe="${cl.id}">Supprimer</button></td></tr>`;
+  });
+  html += `</tbody></table></div>`;
+  return html;
+}
+function vueConfigEnseignants(){
+  const lignes = DATA.enseignants.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
+  let html = `<div class="carte"><h2>Enseignants</h2>
+    <div class="ligne">
+      <div><label>Nom</label><input type="text" id="champNouvEnsNom" placeholder="ex: M. Ateba"></div>
+      <div><label>Matière</label><input type="text" id="champNouvEnsMatiere" placeholder="ex: Mathématiques"></div>
+      <div style="align-self:flex-end;"><button class="btn" id="btnAjoutEns">Ajouter</button></div></div>
+    <table><thead><tr><th>Nom</th><th>Matière</th><th></th></tr></thead><tbody>`;
+  lignes.forEach(e=>{
+    html += `<tr><td><input type="text" data-id="${e.id}" class="champEditEnsNom" value="${echap(e.nom)}"></td>
+    <td><input type="text" data-id="${e.id}" class="champEditEnsMatiere" value="${echap(e.matiere)}"></td>
+    <td><button class="btn danger petit" data-suppr-ens="${e.id}">Supprimer</button></td></tr>`;
+  });
+  html += `</tbody></table></div>`;
+  return html;
+}
+function vueConfigEDT(){
+  const classes = DATA.classes.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
+  let html = `<div class="carte"><h2>Emploi du temps</h2>`;
+  if(!classes.length){ html += `<p class="note">Ajoutez d'abord une classe.</p></div>`; return html; }
+  html += `<div class="ligne"><div><label>Classe</label><select id="selClasseEDT">`+
+    classes.map(c=>`<option value="${c.id}">${echap(c.nom)}</option>`).join('')+`</select></div></div>`;
+  const classeId = document.getElementById('selClasseEDT') ? document.getElementById('selClasseEDT').value : classes[0].id;
+  html += `<div id="zoneEDT"></div></div>`;
+  return html;
+}
+function rendreZoneEDT(classeId){
+  const enseignants = DATA.enseignants.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
+  const lignes = DATA.emploiDuTemps.filter(x=>!x.deleted && x.classeId===classeId)
+    .sort((a,b)=> JOURS_ECOLE.indexOf(a.jour)-JOURS_ECOLE.indexOf(b.jour) || a.heureDebut.localeCompare(b.heureDebut));
+  let html = `<div class="ligne">
+    <div><label>Jour</label><select id="champEdtJour">${JOURS_ECOLE.map(j=>`<option value="${j}">${j}</option>`).join('')}</select></div>
+    <div><label>Début</label><input type="time" id="champEdtDebut" value="08:00"></div>
+    <div><label>Fin</label><input type="time" id="champEdtFin" value="09:00"></div>
+    <div><label>Matière</label><input type="text" id="champEdtMatiere" placeholder="ex: Français"></div>
+    <div><label>Enseignant</label><select id="champEdtEns">
+      <option value="">—</option>${enseignants.map(e=>`<option value="${e.id}">${echap(e.nom)}</option>`).join('')}</select></div>
+    <div style="align-self:flex-end;"><button class="btn" id="btnAjoutEDT">Ajouter au créneau</button></div>
+  </div>
+  <table><thead><tr><th>Jour</th><th>Horaire</th><th>Matière</th><th>Enseignant</th><th></th></tr></thead><tbody>`;
+  lignes.forEach(l=>{
+    const ens = DATA.enseignants.find(e=>e.id===l.enseignantId);
+    html += `<tr><td>${l.jour}</td><td>${l.heureDebut}–${l.heureFin}</td><td>${echap(l.matiere)}</td><td>${ens?echap(ens.nom):'—'}</td>
+    <td><button class="btn danger petit" data-suppr-edt="${l.id}">Supprimer</button></td></tr>`;
+  });
+  html += `</tbody></table>`;
+  document.getElementById('zoneEDT').innerHTML = html;
+  attacherEvenementsEDT(classeId);
+}
+function vueConfigPersonnes(){
+  const caes = DATA.caes.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
+  const cpes = DATA.cpes.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
+  let html = `<div class="grille-2">
+  <div class="carte"><h2>CAE</h2>
+    <div class="ligne"><div><label>Nom du CAE</label><input type="text" id="champNouvCAE"></div>
+    <div style="align-self:flex-end;"><button class="btn" id="btnAjoutCAE">Ajouter</button></div></div>
+    <table><thead><tr><th>Nom</th><th></th></tr></thead><tbody>`;
+  caes.forEach(p=>{ html += `<tr><td>${echap(p.nom)}</td><td><button class="btn danger petit" data-suppr-cae="${p.id}">Supprimer</button></td></tr>`; });
+  html += `</tbody></table></div>
+  <div class="carte"><h2>CPE</h2>
+    <div class="ligne"><div><label>Nom du CPE</label><input type="text" id="champNouvCPE"></div>
+    <div style="align-self:flex-end;"><button class="btn" id="btnAjoutCPE">Ajouter</button></div></div>
+    <table><thead><tr><th>Nom</th><th></th></tr></thead><tbody>`;
+  cpes.forEach(p=>{ html += `<tr><td>${echap(p.nom)}</td><td><button class="btn danger petit" data-suppr-cpe="${p.id}">Supprimer</button></td></tr>`; });
+  html += `</tbody></table></div></div>`;
+  return html;
+}
+function vueConfigAffectations(){
+  const caes = DATA.caes.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
+  const classes = DATA.classes.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
+  if(!caes.length || !classes.length){
+    return `<div class="carte"><h2>Affectations</h2><p class="note">Ajoutez d'abord au moins un CAE et une classe.</p></div>`;
+  }
+  let html = `<div class="carte"><h2>Affectation des classes aux CAE</h2>
+    <p class="note">Cochez les classes suivies par chaque CAE.</p>
+    <table><thead><tr><th>CAE \\ Classe</th>${classes.map(c=>`<th>${echap(c.nom)}</th>`).join('')}</tr></thead><tbody>`;
+  caes.forEach(p=>{
+    html += `<tr><td>${echap(p.nom)}</td>`;
+    classes.forEach(c=>{
+      const existe = DATA.affectations.find(a=>!a.deleted && a.caeId===p.id && a.classeId===c.id);
+      html += `<td style="text-align:center;"><input type="checkbox" data-aff-cae="${p.id}" data-aff-classe="${c.id}" ${existe?'checked':''}></td>`;
+    });
+    html += `</tr>`;
+  });
+  html += `</tbody></table></div>`;
+  return html;
+}
+
+/* ---------- Vue Saisie (CAE) ---------- */
+function vueSaisie(){
+  if(!PROFIL || PROFIL.role!=='CAE'){
+    return `<div class="info">Sélectionnez d'abord votre profil <strong>CAE</strong> depuis l'onglet Accueil.</div>`;
+  }
+  const date = document.getElementById('champDateSaisie') ? document.getElementById('champDateSaisie').value : todayStr();
+  const jour = jourDeDate(date);
+  let html = `<div class="carte"><div class="ligne">
+    <div><label>Date du relevé</label><input type="date" id="champDateSaisie" value="${date}"></div>
+    <div class="petit-texte" style="align-self:flex-end;">Jour : <strong>${jour}</strong></div>
+  </div></div>`;
+
+  const mesClasses = DATA.affectations.filter(a=>!a.deleted && a.caeId===PROFIL.id)
+    .map(a=>DATA.classes.find(c=>c.id===a.classeId && !c.deleted)).filter(Boolean)
+    .sort((a,b)=>a.nom.localeCompare(b.nom));
+
+  if(!mesClasses.length){
+    html += `<div class="alerte">Aucune classe ne vous a été assignée. Contactez un CPE (Configuration → Affectations).</div>`;
+    return html;
+  }
+  if(jour==='Dimanche'){
+    html += `<div class="info">Pas de cours le dimanche.</div>`;
+    return html;
+  }
+
+  mesClasses.forEach(cl=>{
+    const creneaux = DATA.emploiDuTemps.filter(l=>!l.deleted && l.classeId===cl.id && l.jour===jour)
+      .sort((a,b)=>a.heureDebut.localeCompare(b.heureDebut));
+    html += `<div class="carte"><h2>${echap(cl.nom)}</h2>`;
+    if(!creneaux.length){
+      html += `<p class="note">Aucun cours prévu ce jour pour cette classe.</p></div>`;
+      return;
+    }
+    html += `<table><thead><tr><th>Horaire</th><th>Matière</th><th>Enseignant</th><th>Statut</th><th>Détails</th></tr></thead><tbody>`;
+    creneaux.forEach(cr=>{
+      const ens = DATA.enseignants.find(e=>e.id===cr.enseignantId);
+      const releveId = cr.id+'__'+date;
+      const releve = DATA.releves.find(r=>r.id===releveId && !r.deleted);
+      const statut = releve ? releve.statut : '';
+      html += `<tr>
+        <td>${cr.heureDebut}–${cr.heureFin}</td>
+        <td>${echap(cr.matiere)}</td>
+        <td>${ens?echap(ens.nom):'<span class="note">Non défini</span>'}</td>
+        <td><div class="statut-boutons" data-creneau="${cr.id}" data-date="${date}">
+          <button class="sel-P ${statut==='P'?'actif':''}" data-statut="P">Présent</button>
+          <button class="sel-R ${statut==='R'?'actif':''}" data-statut="R">Retard</button>
+          <button class="sel-A ${statut==='A'?'actif':''}" data-statut="A">Absent</button>
+        </div></td>
+        <td>
+          <input type="time" class="champHeureArrivee ${statut==='R'?'':'cache'}" data-creneau="${cr.id}" data-date="${date}" value="${releve&&releve.heureArrivee?releve.heureArrivee:''}" placeholder="Heure d'arrivée">
+          <input type="text" class="champCommentaire" data-creneau="${cr.id}" data-date="${date}" placeholder="Commentaire (optionnel)" value="${releve&&releve.commentaire?echap(releve.commentaire):''}" style="width:160px;">
+        </td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>`;
+  });
+  return html;
+}
+
+/* ---------- Vue Suivi (CPE) ---------- */
+function vueSuivi(){
+  const classes = DATA.classes.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
+  const caes = DATA.caes.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
+  const enseignants = DATA.enseignants.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
+
+  const debut = document.getElementById('filtreDebut') ? document.getElementById('filtreDebut').value : (function(){const d=new Date();d.setDate(d.getDate()-7);return d.toISOString().slice(0,10);})();
+  const fin = document.getElementById('filtreFin') ? document.getElementById('filtreFin').value : todayStr();
+  const filtreClasse = document.getElementById('filtreClasse') ? document.getElementById('filtreClasse').value : '';
+  const filtreEns = document.getElementById('filtreEns') ? document.getElementById('filtreEns').value : '';
+  const filtreCAE = document.getElementById('filtreCAE') ? document.getElementById('filtreCAE').value : '';
+
+  let html = `<div class="carte"><h2>Filtres</h2><div class="ligne">
+    <div><label>Du</label><input type="date" id="filtreDebut" value="${debut}"></div>
+    <div><label>Au</label><input type="date" id="filtreFin" value="${fin}"></div>
+    <div><label>Classe</label><select id="filtreClasse"><option value="">Toutes</option>${classes.map(c=>`<option value="${c.id}" ${filtreClasse===c.id?'selected':''}>${echap(c.nom)}</option>`).join('')}</select></div>
+    <div><label>Enseignant</label><select id="filtreEns"><option value="">Tous</option>${enseignants.map(e=>`<option value="${e.id}" ${filtreEns===e.id?'selected':''}>${echap(e.nom)}</option>`).join('')}</select></div>
+    <div><label>CAE</label><select id="filtreCAE"><option value="">Tous</option>${caes.map(p=>`<option value="${p.id}" ${filtreCAE===p.id?'selected':''}>${echap(p.nom)}</option>`).join('')}</select></div>
+    <div style="align-self:flex-end;"><button class="btn secondaire" id="btnAppliquerFiltres">Appliquer</button></div>
+    <div style="align-self:flex-end;"><button class="btn secondaire" id="btnExportCSV">⬇️ Export CSV</button></div>
+  </div></div>`;
+
+  let releves = DATA.releves.filter(r=>!r.deleted && r.date>=debut && r.date<=fin);
+  if(filtreClasse) releves = releves.filter(r=>r.classeId===filtreClasse);
+  if(filtreEns) releves = releves.filter(r=>r.enseignantId===filtreEns);
+  if(filtreCAE) releves = releves.filter(r=>r.caeId===filtreCAE);
+  releves.sort((a,b)=> a.date.localeCompare(b.date) || a.creneauId.localeCompare(b.creneauId));
+
+  // Bilan récapitulatif par enseignant, sur toutes ses classes (indépendant du filtre Classe)
+  let relevesRecap = DATA.releves.filter(r=>!r.deleted && r.date>=debut && r.date<=fin);
+  if(filtreEns) relevesRecap = relevesRecap.filter(r=>r.enseignantId===filtreEns);
+  if(filtreCAE) relevesRecap = relevesRecap.filter(r=>r.caeId===filtreCAE);
+
+  const statsParEns = {}; // ensId -> {parClasse:{classeId:{presences,absences,retards}}, presences,absences,retards}
+  relevesRecap.forEach(r=>{
+    if(!statsParEns[r.enseignantId]) statsParEns[r.enseignantId] = {parClasse:{}, presences:0, absences:0, retards:0};
+    const s = statsParEns[r.enseignantId];
+    if(!s.parClasse[r.classeId]) s.parClasse[r.classeId] = {presences:0, absences:0, retards:0};
+    const sc = s.parClasse[r.classeId];
+    if(r.statut==='P'){ s.presences++; sc.presences++; }
+    else if(r.statut==='A'){ s.absences++; sc.absences++; }
+    else if(r.statut==='R'){ s.retards++; sc.retards++; }
+  });
+
+  html += `<div class="carte"><h2>Bilan récapitulatif par enseignant (toutes classes confondues, période ${fmtDate(debut)} au ${fmtDate(fin)})</h2>`;
+  const ensIds = Object.keys(statsParEns).sort((a,b)=>{
+    const ea = DATA.enseignants.find(e=>e.id===a), eb = DATA.enseignants.find(e=>e.id===b);
+    return (ea?ea.nom:'').localeCompare(eb?eb.nom:'');
+  });
+  if(!ensIds.length){
+    html += `<p class="note">Aucun relevé sur cette période.</p></div>`;
+  }else{
+    html += `<table><thead><tr><th>Enseignant</th><th>Classe</th><th>Présences</th><th>Absences</th><th>Retards</th><th>Total A+R</th></tr></thead><tbody>`;
+    ensIds.forEach(ensId=>{
+      const ens = DATA.enseignants.find(e=>e.id===ensId);
+      const s = statsParEns[ensId];
+      const totalGeneral = s.absences+s.retards;
+      const alerteGenerale = totalGeneral >= (DATA.meta.seuilAlerte||3);
+      const classeIds = Object.keys(s.parClasse).sort((a,b)=>{
+        const ca = DATA.classes.find(c=>c.id===a), cb = DATA.classes.find(c=>c.id===b);
+        return (ca?ca.nom:'').localeCompare(cb?cb.nom:'');
+      });
+      html += `<tr class="${alerteGenerale?'surbrillance':''}" style="font-weight:600;background:#f4f7fc;">
+        <td>${ens?echap(ens.nom):'—'}</td><td><em>Toutes classes (${classeIds.length})</em></td>
+        <td>${s.presences}</td><td>${s.absences}</td><td>${s.retards}</td><td>${totalGeneral}</td></tr>`;
+      classeIds.forEach(clId=>{
+        const cl = DATA.classes.find(c=>c.id===clId);
+        const sc = s.parClasse[clId];
+        const totalClasse = sc.absences+sc.retards;
+        html += `<tr><td></td><td>${cl?echap(cl.nom):'—'}</td><td>${sc.presences}</td><td>${sc.absences}</td><td>${sc.retards}</td><td>${totalClasse}</td></tr>`;
+      });
+    });
+    html += `</tbody></table></div>`;
+  }
+
+  html += `<div class="carte"><h2>Détail des relevés (${releves.length})</h2>
+    <table><thead><tr><th>Date</th><th>Jour</th><th>Classe</th><th>Horaire</th><th>Matière</th><th>Enseignant</th><th>Statut</th><th>Arrivée</th><th>CAE</th><th>Commentaire</th></tr></thead><tbody>`;
+  releves.forEach(r=>{
+    const creneau = DATA.emploiDuTemps.find(c=>c.id===r.creneauId);
+    const classe = DATA.classes.find(c=>c.id===r.classeId);
+    const ens = DATA.enseignants.find(e=>e.id===r.enseignantId);
+    const cae = DATA.caes.find(p=>p.id===r.caeId);
+    html += `<tr>
+      <td>${r.date}</td><td>${jourDeDate(r.date)}</td><td>${classe?echap(classe.nom):'—'}</td>
+      <td>${creneau?creneau.heureDebut+'–'+creneau.heureFin:'—'}</td>
+      <td>${creneau?echap(creneau.matiere):'—'}</td><td>${ens?echap(ens.nom):'—'}</td>
+      <td><span class="tag ${r.statut}">${r.statut==='P'?'Présent':r.statut==='R'?'Retard':'Absent'}</span></td>
+      <td>${r.heureArrivee||''}</td><td>${cae?echap(cae.nom):'—'}</td><td>${echap(r.commentaire)}</td>
+    </tr>`;
+  });
+  if(!releves.length) html += `<tr><td colspan="10" class="note">Aucun relevé.</td></tr>`;
+  html += `</tbody></table></div>`;
+  return html;
+}
+
+/* ---------- Événements ---------- */
+function attacherEvenements(){
+  // Accueil : sélection profil
+  const selRole = document.getElementById('selRole');
+  if(selRole){
+    const majListe = ()=>{
+      const liste = selRole.value==='CAE' ? DATA.caes.filter(x=>!x.deleted) : DATA.cpes.filter(x=>!x.deleted);
+      const sel = document.getElementById('selNomProfil');
+      sel.innerHTML = liste.sort((a,b)=>a.nom.localeCompare(b.nom)).map(p=>`<option value="${p.id}">${echap(p.nom)}</option>`).join('') || `<option value="">Aucun nom disponible</option>`;
+    };
+    selRole.addEventListener('change', majListe);
+    majListe();
+    document.getElementById('btnValiderProfil').addEventListener('click', ()=>{
+      const sel = document.getElementById('selNomProfil');
+      if(!sel.value){ alert("Aucun nom disponible : demandez à un CPE de l'ajouter dans Configuration."); return; }
+      const liste = selRole.value==='CAE' ? DATA.caes : DATA.cpes;
+      const p = liste.find(x=>x.id===sel.value);
+      PROFIL = {role:selRole.value, id:p.id, nom:p.nom};
+      try{ sessionStorage.setItem('profilCourant', JSON.stringify(PROFIL)); }catch(e){}
+      ONGLET = selRole.value==='CAE' ? 'saisie':'config';
+      render();
+    });
+  }
+  const btnChanger = document.getElementById('btnChangerProfil');
+  if(btnChanger) btnChanger.addEventListener('click', ()=>{ PROFIL=null; try{sessionStorage.removeItem('profilCourant');}catch(e){} render(); });
+
+  const btnCode = document.getElementById('btnChangerCode');
+  if(btnCode) btnCode.addEventListener('click', async ()=>{ demanderCodeAcces(); await chargerDepuisServeur(); });
+
+  // Sous-onglets config
+  document.querySelectorAll('[data-sc]').forEach(b=>{
+    b.addEventListener('click', ()=>{ SOUS_ONGLET_CONFIG = b.dataset.sc; render(); });
+  });
+
+  // Général
+  const btnG = document.getElementById('btnSauverGeneral');
+  if(btnG) btnG.addEventListener('click', async ()=>{
+    DATA.meta.etablissement = document.getElementById('champEtablissement').value.trim();
+    DATA.meta.seuilAlerte = parseInt(document.getElementById('champSeuil').value)||3;
+    DATA.meta.updatedAt = maintenant();
+    await persister(); render();
+  });
+
+  // Classes
+  const btnAC = document.getElementById('btnAjoutClasse');
+  if(btnAC) btnAC.addEventListener('click', async ()=>{
+    const v = document.getElementById('champNouvClasse').value.trim();
+    if(!v) return;
+    DATA.classes.push({id:uid(), nom:v, updatedAt:maintenant(), deleted:false});
+    await persister(); render();
+  });
+  document.querySelectorAll('.champEditClasse').forEach(inp=>{
+    inp.addEventListener('change', async ()=>{
+      const cl = DATA.classes.find(c=>c.id===inp.dataset.id);
+      if(cl){ cl.nom = inp.value.trim(); cl.updatedAt = maintenant(); await persister(); }
+    });
+  });
+  document.querySelectorAll('[data-suppr-classe]').forEach(b=>{
+    b.addEventListener('click', async ()=>{
+      if(!confirm('Supprimer cette classe ?')) return;
+      const cl = DATA.classes.find(c=>c.id===b.dataset.supprClasse);
+      if(cl){ cl.deleted=true; cl.updatedAt=maintenant(); await persister(); render(); }
+    });
+  });
+
+  // Enseignants
+  const btnAE = document.getElementById('btnAjoutEns');
+  if(btnAE) btnAE.addEventListener('click', async ()=>{
+    const nom = document.getElementById('champNouvEnsNom').value.trim();
+    const mat = document.getElementById('champNouvEnsMatiere').value.trim();
+    if(!nom) return;
+    DATA.enseignants.push({id:uid(), nom, matiere:mat, updatedAt:maintenant(), deleted:false});
+    await persister(); render();
+  });
+  document.querySelectorAll('.champEditEnsNom').forEach(inp=>{
+    inp.addEventListener('change', async ()=>{
+      const e = DATA.enseignants.find(x=>x.id===inp.dataset.id);
+      if(e){ e.nom = inp.value.trim(); e.updatedAt=maintenant(); await persister(); }
+    });
+  });
+  document.querySelectorAll('.champEditEnsMatiere').forEach(inp=>{
+    inp.addEventListener('change', async ()=>{
+      const e = DATA.enseignants.find(x=>x.id===inp.dataset.id);
+      if(e){ e.matiere = inp.value.trim(); e.updatedAt=maintenant(); await persister(); }
+    });
+  });
+  document.querySelectorAll('[data-suppr-ens]').forEach(b=>{
+    b.addEventListener('click', async ()=>{
+      if(!confirm('Supprimer cet enseignant ?')) return;
+      const e = DATA.enseignants.find(x=>x.id===b.dataset.supprEns);
+      if(e){ e.deleted=true; e.updatedAt=maintenant(); await persister(); render(); }
+    });
+  });
+
+  // EDT
+  const selClasseEDT = document.getElementById('selClasseEDT');
+  if(selClasseEDT){
+    rendreZoneEDT(selClasseEDT.value);
+    selClasseEDT.addEventListener('change', ()=> rendreZoneEDT(selClasseEDT.value));
+  }
+
+  // CAE / CPE
+  const btnACae = document.getElementById('btnAjoutCAE');
+  if(btnACae) btnACae.addEventListener('click', async ()=>{
+    const v = document.getElementById('champNouvCAE').value.trim();
+    if(!v) return;
+    DATA.caes.push({id:uid(), nom:v, updatedAt:maintenant(), deleted:false});
+    await persister(); render();
+  });
+  document.querySelectorAll('[data-suppr-cae]').forEach(b=>{
+    b.addEventListener('click', async ()=>{
+      if(!confirm('Supprimer ce CAE ?')) return;
+      const p = DATA.caes.find(x=>x.id===b.dataset.supprCae);
+      if(p){ p.deleted=true; p.updatedAt=maintenant(); await persister(); render(); }
+    });
+  });
+  const btnACpe = document.getElementById('btnAjoutCPE');
+  if(btnACpe) btnACpe.addEventListener('click', async ()=>{
+    const v = document.getElementById('champNouvCPE').value.trim();
+    if(!v) return;
+    DATA.cpes.push({id:uid(), nom:v, updatedAt:maintenant(), deleted:false});
+    await persister(); render();
+  });
+  document.querySelectorAll('[data-suppr-cpe]').forEach(b=>{
+    b.addEventListener('click', async ()=>{
+      if(!confirm('Supprimer ce CPE ?')) return;
+      const p = DATA.cpes.find(x=>x.id===b.dataset.supprCpe);
+      if(p){ p.deleted=true; p.updatedAt=maintenant(); await persister(); render(); }
+    });
+  });
+
+  // Affectations
+  document.querySelectorAll('[data-aff-cae]').forEach(chk=>{
+    chk.addEventListener('change', async ()=>{
+      const caeId = chk.dataset.affCae, classeId = chk.dataset.affClasse;
+      let a = DATA.affectations.find(x=>x.caeId===caeId && x.classeId===classeId);
+      if(chk.checked){
+        if(a){ a.deleted=false; a.updatedAt=maintenant(); }
+        else DATA.affectations.push({id:uid(), caeId, classeId, updatedAt:maintenant(), deleted:false});
+      }else{
+        if(a){ a.deleted=true; a.updatedAt=maintenant(); }
+      }
+      await persister();
+    });
+  });
+
+  // Saisie CAE
+  const champDate = document.getElementById('champDateSaisie');
+  if(champDate) champDate.addEventListener('change', render);
+
+  document.querySelectorAll('.statut-boutons button').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const parent = btn.parentElement;
+      const creneauId = parent.dataset.creneau, date = parent.dataset.date;
+      const cr = DATA.emploiDuTemps.find(c=>c.id===creneauId);
+      const releveId = creneauId+'__'+date;
+      let r = DATA.releves.find(x=>x.id===releveId);
+      if(!r){ r = {id:releveId, date, creneauId, classeId:cr.classeId, enseignantId:cr.enseignantId, statut:'', heureArrivee:'', commentaire:'', caeId:PROFIL.id, deleted:false}; DATA.releves.push(r); }
+      r.statut = btn.dataset.statut;
+      r.caeId = PROFIL.id;
+      r.updatedAt = maintenant();
+      r.deleted = false;
+      await persister(); render();
+    });
+  });
+  document.querySelectorAll('.champHeureArrivee').forEach(inp=>{
+    inp.addEventListener('change', async ()=>{
+      const releveId = inp.dataset.creneau+'__'+inp.dataset.date;
+      const r = DATA.releves.find(x=>x.id===releveId);
+      if(r){ r.heureArrivee = inp.value; r.updatedAt=maintenant(); await persister(); }
+    });
+  });
+  document.querySelectorAll('.champCommentaire').forEach(inp=>{
+    inp.addEventListener('change', async ()=>{
+      const releveId = inp.dataset.creneau+'__'+inp.dataset.date;
+      const cr = DATA.emploiDuTemps.find(c=>c.id===inp.dataset.creneau);
+      let r = DATA.releves.find(x=>x.id===releveId);
+      if(!r){ r = {id:releveId, date:inp.dataset.date, creneauId:inp.dataset.creneau, classeId:cr.classeId, enseignantId:cr.enseignantId, statut:'', heureArrivee:'', commentaire:'', caeId:PROFIL.id, deleted:false}; DATA.releves.push(r); }
+      r.commentaire = inp.value; r.updatedAt = maintenant();
+      await persister();
+    });
+  });
+
+  // Suivi CPE
+  const btnFiltres = document.getElementById('btnAppliquerFiltres');
+  if(btnFiltres) btnFiltres.addEventListener('click', render);
+  const btnCSV = document.getElementById('btnExportCSV');
+  if(btnCSV) btnCSV.addEventListener('click', exporterCSV);
+}
+
+function attacherEvenementsEDT(classeId){
+  const btn = document.getElementById('btnAjoutEDT');
+  if(btn) btn.addEventListener('click', async ()=>{
+    const jour = document.getElementById('champEdtJour').value;
+    const debut = document.getElementById('champEdtDebut').value;
+    const fin = document.getElementById('champEdtFin').value;
+    const matiere = document.getElementById('champEdtMatiere').value.trim();
+    const ens = document.getElementById('champEdtEns').value;
+    if(!debut || !fin || !matiere){ alert('Merci de renseigner horaire et matière.'); return; }
+    DATA.emploiDuTemps.push({id:uid(), classeId, jour, heureDebut:debut, heureFin:fin, matiere, enseignantId:ens, updatedAt:maintenant(), deleted:false});
+    await persister();
+    rendreZoneEDT(classeId);
+  });
+  document.querySelectorAll('[data-suppr-edt]').forEach(b=>{
+    b.addEventListener('click', async ()=>{
+      if(!confirm('Supprimer ce créneau ?')) return;
+      const l = DATA.emploiDuTemps.find(x=>x.id===b.dataset.supprEdt);
+      if(l){ l.deleted=true; l.updatedAt=maintenant(); await persister(); rendreZoneEDT(classeId); }
+    });
+  });
+}
+
+/* ---------- Export CSV ---------- */
+function exporterCSV(){
+  const debut = document.getElementById('filtreDebut').value;
+  const fin = document.getElementById('filtreFin').value;
+  const filtreClasse = document.getElementById('filtreClasse').value;
+  const filtreEns = document.getElementById('filtreEns').value;
+  const filtreCAE = document.getElementById('filtreCAE').value;
+  let releves = DATA.releves.filter(r=>!r.deleted && r.date>=debut && r.date<=fin);
+  if(filtreClasse) releves = releves.filter(r=>r.classeId===filtreClasse);
+  if(filtreEns) releves = releves.filter(r=>r.enseignantId===filtreEns);
+  if(filtreCAE) releves = releves.filter(r=>r.caeId===filtreCAE);
+  releves.sort((a,b)=>a.date.localeCompare(b.date));
+  let csv = 'Date;Jour;Classe;Horaire;Matiere;Enseignant;Statut;HeureArrivee;CAE;Commentaire\n';
+  releves.forEach(r=>{
+    const creneau = DATA.emploiDuTemps.find(c=>c.id===r.creneauId);
+    const classe = DATA.classes.find(c=>c.id===r.classeId);
+    const ens = DATA.enseignants.find(e=>e.id===r.enseignantId);
+    const cae = DATA.caes.find(p=>p.id===r.caeId);
+    const ligne = [r.date, jourDeDate(r.date), classe?classe.nom:'', creneau?creneau.heureDebut+'-'+creneau.heureFin:'', creneau?creneau.matiere:'', ens?ens.nom:'', r.statut, r.heureArrivee||'', cae?cae.nom:'', (r.commentaire||'').replace(/;/g,',')];
+    csv += ligne.join(';')+'\n';
+  });
+  const blob = new Blob(['\ufeff'+csv], {type:'text/csv'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'suivi-assiduite-'+debut+'-au-'+fin+'.csv';
+  a.click();
+}
+
+/* ---------- Démarrage ---------- */
+async function demarrer(){
+  // charger sauvegarde locale de secours (utile hors-ligne, en attendant la connexion au serveur)
+  try{
+    const secours = localStorage.getItem('suivi_assiduite_secours');
+    if(secours) DATA = fusionnerDonnees(DATA, JSON.parse(secours));
+  }catch(e){}
+  // reprendre le profil de la session
+  try{
+    const p = sessionStorage.getItem('profilCourant');
+    if(p) PROFIL = JSON.parse(p);
+  }catch(e){}
+  // code d'accès mémorisé sur cet appareil, sinon on le demande
+  codeAcces = localStorage.getItem('suivi_assiduite_code') || '';
+  render();
+  if(!codeAcces) demanderCodeAcces();
+  await chargerDepuisServeur();
+  demarrerPolling();
+}
+
+document.getElementById('btnRecharger').addEventListener('click', chargerDepuisServeur);
+
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{ navigator.serviceWorker.register('/service-worker.js').catch(()=>{}); });
+}
+
+demarrer();
+})();
+</script>
+</body>
+</html>
