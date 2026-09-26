@@ -111,7 +111,7 @@ function echap(s){
 function donneesVides(){
   return {
     meta:{ titre:'Suivi Assiduité Enseignants', etablissement:'', seuilAlerte:3, updatedAt:maintenant() },
-    classes:[], enseignants:[], emploiDuTemps:[], caes:[], cpes:[], affectations:[], releves:[]
+    cycles:[], classes:[], enseignants:[], emploiDuTemps:[], caes:[], cpes:[], affectations:[], releves:[]
   };
 }
 let DATA = donneesVides();
@@ -138,6 +138,7 @@ function fusionnerDonnees(local, distant){
   const meta = (distant.meta && distant.meta.updatedAt>local.meta.updatedAt) ? distant.meta : local.meta;
   return {
     meta,
+    cycles: fusionnerCollection(local.cycles, distant.cycles),
     classes: fusionnerCollection(local.classes, distant.classes),
     enseignants: fusionnerCollection(local.enseignants, distant.enseignants),
     emploiDuTemps: fusionnerCollection(local.emploiDuTemps, distant.emploiDuTemps),
@@ -161,9 +162,11 @@ async function appelApi(chemin, options){
   const opts = options || {};
   opts.headers = Object.assign({'Content-Type':'application/json','x-access-code':codeAcces}, opts.headers||{});
   const rep = await fetch(chemin, opts);
+  let corps = null;
+  try{ corps = await rep.json(); }catch(e){}
   if(rep.status===401){ connecteServeur=false; majBarreStatut(); throw new Error('Code d\'accès invalide'); }
-  if(!rep.ok) throw new Error('Erreur serveur ('+rep.status+')');
-  return rep.json();
+  if(!rep.ok) throw new Error((corps && corps.erreur) || ('Erreur serveur ('+rep.status+')'));
+  return corps;
 }
 async function chargerDepuisServeur(){
   try{
@@ -256,7 +259,7 @@ function render(){
 function vueAccueil(){
   let html = `<div class="carte"><h2>Bienvenue</h2>
   <p>Cet outil permet aux <strong>CAE</strong> de relever la présence, les retards et les absences des enseignants dans les classes qui leur sont assignées, et aux <strong>CPE</strong> de configurer les classes, l'emploi du temps, les affectations et de suivre les relevés.</p>
-  <p class="note">Ce fichier doit être placé sur un emplacement réseau accessible à tous (CAE et CPE). Chaque personne connecte ce même fichier via le bouton « 📂 Connecter le fichier partagé » en haut de la page (Chrome ou Edge recommandés).</p></div>`;
+  <p class="note">Les données sont stockées en ligne : chacun peut se connecter depuis son téléphone ou son ordinateur, avec ou sans le WiFi du collège.</p></div>`;
 
   html += `<div class="carte"><h2>Qui êtes-vous ?</h2>`;
   if(PROFIL){
@@ -271,9 +274,10 @@ function vueAccueil(){
       </select></div>
       <div><label>Mon nom</label>
       <select id="selNomProfil"></select></div>
+      <div id="zoneMdpCPE" class="cache"><label>Mot de passe</label><input type="password" id="champMdpCPE"></div>
       <div style="align-self:flex-end;"><button class="btn" id="btnValiderProfil">Continuer</button></div>
     </div>
-    <p class="petit-texte">Aucun mot de passe n'est demandé. Si votre nom n'apparaît pas dans la liste, demandez à un CPE de l'ajouter dans Configuration → CAE &amp; CPE.</p>`;
+    <p class="petit-texte">Les CAE n'ont pas de mot de passe. Les CPE doivent saisir leur mot de passe (défini dans Configuration → CAE &amp; CPE). Si votre nom n'apparaît pas dans la liste, demandez à un CPE de l'ajouter.</p>`;
   }
   html += `</div>`;
 
@@ -286,6 +290,7 @@ function vueAccueil(){
 /* ---------- Vue Configuration (CPE) ---------- */
 const SOUS_ONGLETS_CONFIG = [
   {id:'general', label:'Général'},
+  {id:'cycles', label:'Cycles'},
   {id:'classes', label:'Classes'},
   {id:'enseignants', label:'Enseignants'},
   {id:'edt', label:'Emploi du temps'},
@@ -295,6 +300,7 @@ const SOUS_ONGLETS_CONFIG = [
 function vueConfig(){
   let html = `<div class="sous-onglets">`+SOUS_ONGLETS_CONFIG.map(s=>`<button data-sc="${s.id}" class="${SOUS_ONGLET_CONFIG===s.id?'actif':''}">${s.label}</button>`).join('')+`</div>`;
   if(SOUS_ONGLET_CONFIG==='general') html += vueConfigGeneral();
+  else if(SOUS_ONGLET_CONFIG==='cycles') html += vueConfigCycles();
   else if(SOUS_ONGLET_CONFIG==='classes') html += vueConfigClasses();
   else if(SOUS_ONGLET_CONFIG==='enseignants') html += vueConfigEnseignants();
   else if(SOUS_ONGLET_CONFIG==='edt') html += vueConfigEDT();
@@ -310,14 +316,43 @@ function vueConfigGeneral(){
       <div style="align-self:flex-end;"><button class="btn" id="btnSauverGeneral">Enregistrer</button></div>
     </div></div>`;
 }
+function vueConfigCycles(){
+  const cycles = DATA.cycles.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
+  const cpes = DATA.cpes.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
+  let html = `<div class="carte"><h2>Cycles</h2>
+    <p class="note">Un cycle regroupe plusieurs classes et est géré par un CPE responsable.</p>
+    <div class="ligne">
+      <div><label>Nom du cycle</label><input type="text" id="champNouvCycle" placeholder="ex: 1er cycle (6ème-3ème)"></div>
+      <div><label>CPE responsable</label><select id="champNouvCycleCPE"><option value="">—</option>${cpes.map(p=>`<option value="${p.id}">${echap(p.nom)}</option>`).join('')}</select></div>
+      <div style="align-self:flex-end;"><button class="btn" id="btnAjoutCycle">Ajouter</button></div>
+    </div>
+    <table><thead><tr><th>Cycle</th><th>CPE responsable</th><th>Classes</th><th></th></tr></thead><tbody>`;
+  if(!cycles.length) html += `<tr><td colspan="4" class="note">Aucun cycle créé.</td></tr>`;
+  cycles.forEach(cy=>{
+    const nbClasses = DATA.classes.filter(c=>!c.deleted && c.cycleId===cy.id).length;
+    html += `<tr>
+      <td><input type="text" data-id="${cy.id}" class="champEditCycleNom" value="${echap(cy.nom)}"></td>
+      <td><select data-id="${cy.id}" class="champEditCycleCPE"><option value="">—</option>${cpes.map(p=>`<option value="${p.id}" ${cy.cpeId===p.id?'selected':''}>${echap(p.nom)}</option>`).join('')}</select></td>
+      <td>${nbClasses}</td>
+      <td><button class="btn danger petit" data-suppr-cycle="${cy.id}">Supprimer</button></td>
+    </tr>`;
+  });
+  html += `</tbody></table></div>`;
+  return html;
+}
 function vueConfigClasses(){
   const lignes = DATA.classes.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
-  let html = `<div class="carte"><h2>Classes</h2>
-    <div class="ligne"><div><label>Nouvelle classe</label><input type="text" id="champNouvClasse" placeholder="ex: 6ème A"></div>
+  const cycles = DATA.cycles.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
+  let html = `<div class="carte"><h2>Classes</h2>`;
+  if(!cycles.length) html += `<div class="info">Créez d'abord au moins un cycle (onglet Cycles) pour pouvoir y rattacher vos classes.</div>`;
+  html += `<div class="ligne">
+    <div><label>Nouvelle classe</label><input type="text" id="champNouvClasse" placeholder="ex: 6ème A"></div>
+    <div><label>Cycle</label><select id="champNouvClasseCycle"><option value="">—</option>${cycles.map(cy=>`<option value="${cy.id}">${echap(cy.nom)}</option>`).join('')}</select></div>
     <div style="align-self:flex-end;"><button class="btn" id="btnAjoutClasse">Ajouter</button></div></div>
-    <table><thead><tr><th>Classe</th><th></th></tr></thead><tbody>`;
+    <table><thead><tr><th>Classe</th><th>Cycle</th><th></th></tr></thead><tbody>`;
   lignes.forEach(cl=>{
     html += `<tr><td><input type="text" data-id="${cl.id}" class="champEditClasse" value="${echap(cl.nom)}"></td>
+    <td><select data-id="${cl.id}" class="champEditClasseCycle"><option value="">—</option>${cycles.map(cy=>`<option value="${cy.id}" ${cl.cycleId===cy.id?'selected':''}>${echap(cy.nom)}</option>`).join('')}</select></td>
     <td><button class="btn danger petit" data-suppr-classe="${cl.id}">Supprimer</button></td></tr>`;
   });
   html += `</tbody></table></div>`;
@@ -383,10 +418,20 @@ function vueConfigPersonnes(){
   caes.forEach(p=>{ html += `<tr><td>${echap(p.nom)}</td><td><button class="btn danger petit" data-suppr-cae="${p.id}">Supprimer</button></td></tr>`; });
   html += `</tbody></table></div>
   <div class="carte"><h2>CPE</h2>
+    <p class="note">Chaque CPE doit avoir un mot de passe pour se connecter.</p>
     <div class="ligne"><div><label>Nom du CPE</label><input type="text" id="champNouvCPE"></div>
+    <div><label>Mot de passe</label><input type="password" id="champNouvCPEMdp" placeholder="(optionnel ici, à définir ensuite)"></div>
     <div style="align-self:flex-end;"><button class="btn" id="btnAjoutCPE">Ajouter</button></div></div>
-    <table><thead><tr><th>Nom</th><th></th></tr></thead><tbody>`;
-  cpes.forEach(p=>{ html += `<tr><td>${echap(p.nom)}</td><td><button class="btn danger petit" data-suppr-cpe="${p.id}">Supprimer</button></td></tr>`; });
+    <table><thead><tr><th>Nom</th><th>Mot de passe</th><th></th></tr></thead><tbody>`;
+  cpes.forEach(p=>{
+    html += `<tr><td>${echap(p.nom)}</td>
+    <td>
+      <span class="tag ${p.aMotDePasse?'P':'A'}">${p.aMotDePasse?'Défini':'Non défini'}</span>
+      <input type="password" class="champNouveauMdpCPE" data-id="${p.id}" placeholder="Nouveau mot de passe" style="width:140px;">
+      <button class="btn secondaire petit" data-def-mdp-cpe="${p.id}">Enregistrer</button>
+    </td>
+    <td><button class="btn danger petit" data-suppr-cpe="${p.id}">Supprimer</button></td></tr>`;
+  });
   html += `</tbody></table></div></div>`;
   return html;
 }
@@ -472,12 +517,20 @@ function vueSaisie(){
 
 /* ---------- Vue Suivi (CPE) ---------- */
 function vueSuivi(){
-  const classes = DATA.classes.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
+  const cyclesTous = DATA.cycles.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
   const caes = DATA.caes.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
   const enseignants = DATA.enseignants.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
 
   const debut = document.getElementById('filtreDebut') ? document.getElementById('filtreDebut').value : (function(){const d=new Date();d.setDate(d.getDate()-7);return d.toISOString().slice(0,10);})();
   const fin = document.getElementById('filtreFin') ? document.getElementById('filtreFin').value : todayStr();
+  // Par défaut, un CPE connecté voit d'abord le(s) cycle(s) dont il/elle est responsable
+  const cycleParDefaut = (function(){
+    if(!PROFIL || PROFIL.role!=='CPE') return '';
+    const mesCycles = cyclesTous.filter(cy=>cy.cpeId===PROFIL.id);
+    return mesCycles.length===1 ? mesCycles[0].id : '';
+  })();
+  const filtreCycle = document.getElementById('filtreCycle') ? document.getElementById('filtreCycle').value : cycleParDefaut;
+  const classes = DATA.classes.filter(x=>!x.deleted && (!filtreCycle || x.cycleId===filtreCycle)).sort((a,b)=>a.nom.localeCompare(b.nom));
   const filtreClasse = document.getElementById('filtreClasse') ? document.getElementById('filtreClasse').value : '';
   const filtreEns = document.getElementById('filtreEns') ? document.getElementById('filtreEns').value : '';
   const filtreCAE = document.getElementById('filtreCAE') ? document.getElementById('filtreCAE').value : '';
@@ -485,6 +538,7 @@ function vueSuivi(){
   let html = `<div class="carte"><h2>Filtres</h2><div class="ligne">
     <div><label>Du</label><input type="date" id="filtreDebut" value="${debut}"></div>
     <div><label>Au</label><input type="date" id="filtreFin" value="${fin}"></div>
+    <div><label>Cycle</label><select id="filtreCycle"><option value="">Tous</option>${cyclesTous.map(cy=>`<option value="${cy.id}" ${filtreCycle===cy.id?'selected':''}>${echap(cy.nom)}</option>`).join('')}</select></div>
     <div><label>Classe</label><select id="filtreClasse"><option value="">Toutes</option>${classes.map(c=>`<option value="${c.id}" ${filtreClasse===c.id?'selected':''}>${echap(c.nom)}</option>`).join('')}</select></div>
     <div><label>Enseignant</label><select id="filtreEns"><option value="">Tous</option>${enseignants.map(e=>`<option value="${e.id}" ${filtreEns===e.id?'selected':''}>${echap(e.nom)}</option>`).join('')}</select></div>
     <div><label>CAE</label><select id="filtreCAE"><option value="">Tous</option>${caes.map(p=>`<option value="${p.id}" ${filtreCAE===p.id?'selected':''}>${echap(p.nom)}</option>`).join('')}</select></div>
@@ -492,14 +546,20 @@ function vueSuivi(){
     <div style="align-self:flex-end;"><button class="btn secondaire" id="btnExportCSV">⬇️ Export CSV</button></div>
   </div></div>`;
 
-  let releves = DATA.releves.filter(r=>!r.deleted && r.date>=debut && r.date<=fin);
+  const classeDansCycle = (classeId)=>{
+    if(!filtreCycle) return true;
+    const cl = DATA.classes.find(c=>c.id===classeId);
+    return cl && cl.cycleId===filtreCycle;
+  };
+
+  let releves = DATA.releves.filter(r=>!r.deleted && r.date>=debut && r.date<=fin && classeDansCycle(r.classeId));
   if(filtreClasse) releves = releves.filter(r=>r.classeId===filtreClasse);
   if(filtreEns) releves = releves.filter(r=>r.enseignantId===filtreEns);
   if(filtreCAE) releves = releves.filter(r=>r.caeId===filtreCAE);
   releves.sort((a,b)=> a.date.localeCompare(b.date) || a.creneauId.localeCompare(b.creneauId));
 
-  // Bilan récapitulatif par enseignant, sur toutes ses classes (indépendant du filtre Classe)
-  let relevesRecap = DATA.releves.filter(r=>!r.deleted && r.date>=debut && r.date<=fin);
+  // Bilan récapitulatif par enseignant, sur toutes ses classes du cycle filtré (indépendant du filtre Classe)
+  let relevesRecap = DATA.releves.filter(r=>!r.deleted && r.date>=debut && r.date<=fin && classeDansCycle(r.classeId));
   if(filtreEns) relevesRecap = relevesRecap.filter(r=>r.enseignantId===filtreEns);
   if(filtreCAE) relevesRecap = relevesRecap.filter(r=>r.caeId===filtreCAE);
 
@@ -514,7 +574,8 @@ function vueSuivi(){
     else if(r.statut==='R'){ s.retards++; sc.retards++; }
   });
 
-  html += `<div class="carte"><h2>Bilan récapitulatif par enseignant (toutes classes confondues, période ${fmtDate(debut)} au ${fmtDate(fin)})</h2>`;
+  const nomCycleFiltre = filtreCycle ? (cyclesTous.find(cy=>cy.id===filtreCycle)||{}).nom : 'tous cycles confondus';
+  html += `<div class="carte"><h2>Bilan récapitulatif par enseignant (${echap(nomCycleFiltre)}, période ${fmtDate(debut)} au ${fmtDate(fin)})</h2>`;
   const ensIds = Object.keys(statsParEns).sort((a,b)=>{
     const ea = DATA.enseignants.find(e=>e.id===a), eb = DATA.enseignants.find(e=>e.id===b);
     return (ea?ea.nom:'').localeCompare(eb?eb.nom:'');
@@ -533,7 +594,7 @@ function vueSuivi(){
         return (ca?ca.nom:'').localeCompare(cb?cb.nom:'');
       });
       html += `<tr class="${alerteGenerale?'surbrillance':''}" style="font-weight:600;background:#f4f7fc;">
-        <td>${ens?echap(ens.nom):'—'}</td><td><em>Toutes classes (${classeIds.length})</em></td>
+        <td>${ens?echap(ens.nom):'—'}</td><td><em>${filtreCycle?'Ce cycle':'Toutes classes'} (${classeIds.length})</em></td>
         <td>${s.presences}</td><td>${s.absences}</td><td>${s.retards}</td><td>${totalGeneral}</td></tr>`;
       classeIds.forEach(clId=>{
         const cl = DATA.classes.find(c=>c.id===clId);
@@ -546,21 +607,22 @@ function vueSuivi(){
   }
 
   html += `<div class="carte"><h2>Détail des relevés (${releves.length})</h2>
-    <table><thead><tr><th>Date</th><th>Jour</th><th>Classe</th><th>Horaire</th><th>Matière</th><th>Enseignant</th><th>Statut</th><th>Arrivée</th><th>CAE</th><th>Commentaire</th></tr></thead><tbody>`;
+    <table><thead><tr><th>Date</th><th>Jour</th><th>Cycle</th><th>Classe</th><th>Horaire</th><th>Matière</th><th>Enseignant</th><th>Statut</th><th>Arrivée</th><th>CAE</th><th>Commentaire</th></tr></thead><tbody>`;
   releves.forEach(r=>{
     const creneau = DATA.emploiDuTemps.find(c=>c.id===r.creneauId);
     const classe = DATA.classes.find(c=>c.id===r.classeId);
+    const cycle = classe ? DATA.cycles.find(cy=>cy.id===classe.cycleId) : null;
     const ens = DATA.enseignants.find(e=>e.id===r.enseignantId);
     const cae = DATA.caes.find(p=>p.id===r.caeId);
     html += `<tr>
-      <td>${r.date}</td><td>${jourDeDate(r.date)}</td><td>${classe?echap(classe.nom):'—'}</td>
+      <td>${r.date}</td><td>${jourDeDate(r.date)}</td><td>${cycle?echap(cycle.nom):'—'}</td><td>${classe?echap(classe.nom):'—'}</td>
       <td>${creneau?creneau.heureDebut+'–'+creneau.heureFin:'—'}</td>
       <td>${creneau?echap(creneau.matiere):'—'}</td><td>${ens?echap(ens.nom):'—'}</td>
       <td><span class="tag ${r.statut}">${r.statut==='P'?'Présent':r.statut==='R'?'Retard':'Absent'}</span></td>
       <td>${r.heureArrivee||''}</td><td>${cae?echap(cae.nom):'—'}</td><td>${echap(r.commentaire)}</td>
     </tr>`;
   });
-  if(!releves.length) html += `<tr><td colspan="10" class="note">Aucun relevé.</td></tr>`;
+  if(!releves.length) html += `<tr><td colspan="11" class="note">Aucun relevé.</td></tr>`;
   html += `</tbody></table></div>`;
   return html;
 }
@@ -574,14 +636,25 @@ function attacherEvenements(){
       const liste = selRole.value==='CAE' ? DATA.caes.filter(x=>!x.deleted) : DATA.cpes.filter(x=>!x.deleted);
       const sel = document.getElementById('selNomProfil');
       sel.innerHTML = liste.sort((a,b)=>a.nom.localeCompare(b.nom)).map(p=>`<option value="${p.id}">${echap(p.nom)}</option>`).join('') || `<option value="">Aucun nom disponible</option>`;
+      const zoneMdp = document.getElementById('zoneMdpCPE');
+      if(zoneMdp) zoneMdp.classList.toggle('cache', selRole.value!=='CPE');
     };
     selRole.addEventListener('change', majListe);
     majListe();
-    document.getElementById('btnValiderProfil').addEventListener('click', ()=>{
+    document.getElementById('btnValiderProfil').addEventListener('click', async ()=>{
       const sel = document.getElementById('selNomProfil');
       if(!sel.value){ alert("Aucun nom disponible : demandez à un CPE de l'ajouter dans Configuration."); return; }
       const liste = selRole.value==='CAE' ? DATA.caes : DATA.cpes;
       const p = liste.find(x=>x.id===sel.value);
+      if(selRole.value==='CPE'){
+        const mdp = document.getElementById('champMdpCPE').value;
+        try{
+          await appelApi('/api/cpe/connexion', {method:'POST', body: JSON.stringify({cpeId:p.id, motDePasse:mdp})});
+        }catch(e){
+          alert(e.message || 'Connexion refusée.');
+          return;
+        }
+      }
       PROFIL = {role:selRole.value, id:p.id, nom:p.nom};
       try{ sessionStorage.setItem('profilCourant', JSON.stringify(PROFIL)); }catch(e){}
       ONGLET = selRole.value==='CAE' ? 'saisie':'config';
@@ -608,18 +681,54 @@ function attacherEvenements(){
     await persister(); render();
   });
 
+  // Cycles
+  const btnAcy = document.getElementById('btnAjoutCycle');
+  if(btnAcy) btnAcy.addEventListener('click', async ()=>{
+    const v = document.getElementById('champNouvCycle').value.trim();
+    const cpeId = document.getElementById('champNouvCycleCPE').value;
+    if(!v) return;
+    DATA.cycles.push({id:uid(), nom:v, cpeId, updatedAt:maintenant(), deleted:false});
+    await persister(); render();
+  });
+  document.querySelectorAll('.champEditCycleNom').forEach(inp=>{
+    inp.addEventListener('change', async ()=>{
+      const cy = DATA.cycles.find(c=>c.id===inp.dataset.id);
+      if(cy){ cy.nom = inp.value.trim(); cy.updatedAt=maintenant(); await persister(); }
+    });
+  });
+  document.querySelectorAll('.champEditCycleCPE').forEach(sel=>{
+    sel.addEventListener('change', async ()=>{
+      const cy = DATA.cycles.find(c=>c.id===sel.dataset.id);
+      if(cy){ cy.cpeId = sel.value; cy.updatedAt=maintenant(); await persister(); }
+    });
+  });
+  document.querySelectorAll('[data-suppr-cycle]').forEach(b=>{
+    b.addEventListener('click', async ()=>{
+      if(!confirm('Supprimer ce cycle ? Les classes qui y sont rattachées ne seront plus associées à aucun cycle.')) return;
+      const cy = DATA.cycles.find(c=>c.id===b.dataset.supprCycle);
+      if(cy){ cy.deleted=true; cy.updatedAt=maintenant(); await persister(); render(); }
+    });
+  });
+
   // Classes
   const btnAC = document.getElementById('btnAjoutClasse');
   if(btnAC) btnAC.addEventListener('click', async ()=>{
     const v = document.getElementById('champNouvClasse').value.trim();
+    const cycleId = document.getElementById('champNouvClasseCycle') ? document.getElementById('champNouvClasseCycle').value : '';
     if(!v) return;
-    DATA.classes.push({id:uid(), nom:v, updatedAt:maintenant(), deleted:false});
+    DATA.classes.push({id:uid(), nom:v, cycleId, updatedAt:maintenant(), deleted:false});
     await persister(); render();
   });
   document.querySelectorAll('.champEditClasse').forEach(inp=>{
     inp.addEventListener('change', async ()=>{
       const cl = DATA.classes.find(c=>c.id===inp.dataset.id);
       if(cl){ cl.nom = inp.value.trim(); cl.updatedAt = maintenant(); await persister(); }
+    });
+  });
+  document.querySelectorAll('.champEditClasseCycle').forEach(sel=>{
+    sel.addEventListener('change', async ()=>{
+      const cl = DATA.classes.find(c=>c.id===sel.dataset.id);
+      if(cl){ cl.cycleId = sel.value; cl.updatedAt=maintenant(); await persister(); }
     });
   });
   document.querySelectorAll('[data-suppr-classe]').forEach(b=>{
@@ -684,9 +793,29 @@ function attacherEvenements(){
   const btnACpe = document.getElementById('btnAjoutCPE');
   if(btnACpe) btnACpe.addEventListener('click', async ()=>{
     const v = document.getElementById('champNouvCPE').value.trim();
+    const mdp = document.getElementById('champNouvCPEMdp').value;
     if(!v) return;
-    DATA.cpes.push({id:uid(), nom:v, updatedAt:maintenant(), deleted:false});
-    await persister(); render();
+    const nouvId = uid();
+    DATA.cpes.push({id:nouvId, nom:v, updatedAt:maintenant(), deleted:false});
+    await persister();
+    if(mdp){
+      try{ await appelApi('/api/cpe/mot-de-passe', {method:'POST', body: JSON.stringify({cpeId:nouvId, motDePasse:mdp})}); }
+      catch(e){ alert("CPE créé, mais le mot de passe n'a pas pu être enregistré : "+e.message); }
+      await chargerDepuisServeur();
+    }
+    render();
+  });
+  document.querySelectorAll('[data-def-mdp-cpe]').forEach(b=>{
+    b.addEventListener('click', async ()=>{
+      const input = document.querySelector('.champNouveauMdpCPE[data-id="'+b.dataset.defMdpCpe+'"]');
+      const mdp = input ? input.value : '';
+      if(!mdp || mdp.length<4){ alert('Choisissez un mot de passe d\'au moins 4 caractères.'); return; }
+      try{
+        await appelApi('/api/cpe/mot-de-passe', {method:'POST', body: JSON.stringify({cpeId:b.dataset.defMdpCpe, motDePasse:mdp})});
+        alert('Mot de passe enregistré.');
+        await chargerDepuisServeur(); render();
+      }catch(e){ alert("Erreur : "+e.message); }
+    });
   });
   document.querySelectorAll('[data-suppr-cpe]').forEach(b=>{
     b.addEventListener('click', async ()=>{
@@ -781,21 +910,24 @@ function attacherEvenementsEDT(classeId){
 function exporterCSV(){
   const debut = document.getElementById('filtreDebut').value;
   const fin = document.getElementById('filtreFin').value;
+  const filtreCycle = document.getElementById('filtreCycle') ? document.getElementById('filtreCycle').value : '';
   const filtreClasse = document.getElementById('filtreClasse').value;
   const filtreEns = document.getElementById('filtreEns').value;
   const filtreCAE = document.getElementById('filtreCAE').value;
   let releves = DATA.releves.filter(r=>!r.deleted && r.date>=debut && r.date<=fin);
+  if(filtreCycle) releves = releves.filter(r=>{ const cl=DATA.classes.find(c=>c.id===r.classeId); return cl && cl.cycleId===filtreCycle; });
   if(filtreClasse) releves = releves.filter(r=>r.classeId===filtreClasse);
   if(filtreEns) releves = releves.filter(r=>r.enseignantId===filtreEns);
   if(filtreCAE) releves = releves.filter(r=>r.caeId===filtreCAE);
   releves.sort((a,b)=>a.date.localeCompare(b.date));
-  let csv = 'Date;Jour;Classe;Horaire;Matiere;Enseignant;Statut;HeureArrivee;CAE;Commentaire\n';
+  let csv = 'Date;Jour;Cycle;Classe;Horaire;Matiere;Enseignant;Statut;HeureArrivee;CAE;Commentaire\n';
   releves.forEach(r=>{
     const creneau = DATA.emploiDuTemps.find(c=>c.id===r.creneauId);
     const classe = DATA.classes.find(c=>c.id===r.classeId);
+    const cycle = classe ? DATA.cycles.find(cy=>cy.id===classe.cycleId) : null;
     const ens = DATA.enseignants.find(e=>e.id===r.enseignantId);
     const cae = DATA.caes.find(p=>p.id===r.caeId);
-    const ligne = [r.date, jourDeDate(r.date), classe?classe.nom:'', creneau?creneau.heureDebut+'-'+creneau.heureFin:'', creneau?creneau.matiere:'', ens?ens.nom:'', r.statut, r.heureArrivee||'', cae?cae.nom:'', (r.commentaire||'').replace(/;/g,',')];
+    const ligne = [r.date, jourDeDate(r.date), cycle?cycle.nom:'', classe?classe.nom:'', creneau?creneau.heureDebut+'-'+creneau.heureFin:'', creneau?creneau.matiere:'', ens?ens.nom:'', r.statut, r.heureArrivee||'', cae?cae.nom:'', (r.commentaire||'').replace(/;/g,',')];
     csv += ligne.join(';')+'\n';
   });
   const blob = new Blob(['\ufeff'+csv], {type:'text/csv'});
