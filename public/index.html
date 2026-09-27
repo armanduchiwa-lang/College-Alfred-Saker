@@ -118,6 +118,7 @@ let DATA = donneesVides();
 let PROFIL = null; // {role:'CAE'|'CPE', id, nom}
 let ONGLET = 'accueil';
 let SOUS_ONGLET_CONFIG = 'classes';
+let JOUR_EDT_ACTIF = 'Lundi';
 let codeAcces = '';
 let connecteServeur = false;
 let derniereSynchro = null;
@@ -374,38 +375,60 @@ function vueConfigEnseignants(){
   html += `</tbody></table></div>`;
   return html;
 }
+const HORAIRES_FIXES = [
+  ['07:30','08:20'], ['08:20','09:10'], ['09:10','10:00'],
+  ['10:20','11:10'], ['11:10','12:00'],
+  ['12:35','13:25'], ['13:25','14:15'], ['14:15','15:05'], ['15:05','15:55']
+];
+function idCreneauFixe(classeId, jour, heureDebut){
+  return 'edt_'+classeId+'_'+jour+'_'+heureDebut.replace(':','');
+}
 function vueConfigEDT(){
   const classes = DATA.classes.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
   let html = `<div class="carte"><h2>Emploi du temps</h2>`;
   if(!classes.length){ html += `<p class="note">Ajoutez d'abord une classe.</p></div>`; return html; }
   html += `<div class="ligne"><div><label>Classe</label><select id="selClasseEDT">`+
     classes.map(c=>`<option value="${c.id}">${echap(c.nom)}</option>`).join('')+`</select></div></div>`;
-  const classeId = document.getElementById('selClasseEDT') ? document.getElementById('selClasseEDT').value : classes[0].id;
+  html += `<div class="sous-onglets" id="ongletsJourEDT">`+JOURS_ECOLE.map(j=>`<button data-jour-edt="${j}" class="${JOUR_EDT_ACTIF===j?'actif':''}">${j}</button>`).join('')+`</div>`;
   html += `<div id="zoneEDT"></div></div>`;
   return html;
 }
 function rendreZoneEDT(classeId){
   const enseignants = DATA.enseignants.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
-  const lignes = DATA.emploiDuTemps.filter(x=>!x.deleted && x.classeId===classeId)
-    .sort((a,b)=> JOURS_ECOLE.indexOf(a.jour)-JOURS_ECOLE.indexOf(b.jour) || a.heureDebut.localeCompare(b.heureDebut));
-  let html = `<div class="ligne">
-    <div><label>Jour</label><select id="champEdtJour">${JOURS_ECOLE.map(j=>`<option value="${j}">${j}</option>`).join('')}</select></div>
-    <div><label>Début</label><input type="time" id="champEdtDebut" value="08:00"></div>
-    <div><label>Fin</label><input type="time" id="champEdtFin" value="09:00"></div>
-    <div><label>Matière</label><input type="text" id="champEdtMatiere" placeholder="ex: Français"></div>
-    <div><label>Enseignant</label><select id="champEdtEns">
-      <option value="">—</option>${enseignants.map(e=>`<option value="${e.id}">${echap(e.nom)}</option>`).join('')}</select></div>
-    <div style="align-self:flex-end;"><button class="btn" id="btnAjoutEDT">Ajouter au créneau</button></div>
-  </div>
-  <table><thead><tr><th>Jour</th><th>Horaire</th><th>Matière</th><th>Enseignant</th><th></th></tr></thead><tbody>`;
-  lignes.forEach(l=>{
-    const ens = DATA.enseignants.find(e=>e.id===l.enseignantId);
-    html += `<tr><td>${l.jour}</td><td>${l.heureDebut}–${l.heureFin}</td><td>${echap(l.matiere)}</td><td>${ens?echap(ens.nom):'—'}</td>
-    <td><button class="btn danger petit" data-suppr-edt="${l.id}">Supprimer</button></td></tr>`;
+  const jour = JOUR_EDT_ACTIF;
+  let html = `<table><thead><tr><th>Horaire</th><th>Matière</th><th>Enseignant</th></tr></thead><tbody>`;
+  HORAIRES_FIXES.forEach(([debut, fin])=>{
+    const l = DATA.emploiDuTemps.find(x=>!x.deleted && x.classeId===classeId && x.jour===jour && x.heureDebut===debut && x.heureFin===fin);
+    html += `<tr>
+      <td>${debut}–${fin}</td>
+      <td><input type="text" class="champMatiereFixe" data-classe="${classeId}" data-jour="${jour}" data-debut="${debut}" data-fin="${fin}" value="${l?echap(l.matiere):''}" placeholder="Matière"></td>
+      <td><select class="champEnsFixe" data-classe="${classeId}" data-jour="${jour}" data-debut="${debut}" data-fin="${fin}">
+        <option value="">—</option>${enseignants.map(e=>`<option value="${e.id}" ${l&&l.enseignantId===e.id?'selected':''}>${echap(e.nom)}</option>`).join('')}
+      </select></td>
+    </tr>`;
   });
-  html += `</tbody></table>`;
+  html += `</tbody></table><p class="petit-texte">Laissez la matière vide et l'enseignant sur « — » pour un créneau libre (pas de cours).</p>`;
   document.getElementById('zoneEDT').innerHTML = html;
-  attacherEvenementsEDT(classeId);
+  attacherEvenementsEDT();
+}
+async function majCreneauFixe(classeId, jour, debut, fin, champ, valeur){
+  let l = DATA.emploiDuTemps.find(x=>x.classeId===classeId && x.jour===jour && x.heureDebut===debut && x.heureFin===fin);
+  if(!l){
+    l = {id:idCreneauFixe(classeId,jour,debut), classeId, jour, heureDebut:debut, heureFin:fin, matiere:'', enseignantId:'', updatedAt:maintenant(), deleted:false};
+    DATA.emploiDuTemps.push(l);
+  }
+  l[champ] = valeur;
+  l.deleted = !(l.matiere && l.matiere.trim()) && !l.enseignantId;
+  l.updatedAt = maintenant();
+  await persister();
+}
+function attacherEvenementsEDT(){
+  document.querySelectorAll('.champMatiereFixe').forEach(inp=>{
+    inp.addEventListener('change', ()=> majCreneauFixe(inp.dataset.classe, inp.dataset.jour, inp.dataset.debut, inp.dataset.fin, 'matiere', inp.value.trim()));
+  });
+  document.querySelectorAll('.champEnsFixe').forEach(sel=>{
+    sel.addEventListener('change', ()=> majCreneauFixe(sel.dataset.classe, sel.dataset.jour, sel.dataset.debut, sel.dataset.fin, 'enseignantId', sel.value));
+  });
 }
 function vueConfigPersonnes(){
   const caes = DATA.caes.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
@@ -774,6 +797,13 @@ function attacherEvenements(){
     rendreZoneEDT(selClasseEDT.value);
     selClasseEDT.addEventListener('change', ()=> rendreZoneEDT(selClasseEDT.value));
   }
+  document.querySelectorAll('[data-jour-edt]').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      JOUR_EDT_ACTIF = b.dataset.jourEdt;
+      document.querySelectorAll('[data-jour-edt]').forEach(x=>x.classList.toggle('actif', x.dataset.jourEdt===JOUR_EDT_ACTIF));
+      if(selClasseEDT) rendreZoneEDT(selClasseEDT.value);
+    });
+  });
 
   // CAE / CPE
   const btnACae = document.getElementById('btnAjoutCAE');
@@ -884,27 +914,6 @@ function attacherEvenements(){
   if(btnCSV) btnCSV.addEventListener('click', exporterCSV);
 }
 
-function attacherEvenementsEDT(classeId){
-  const btn = document.getElementById('btnAjoutEDT');
-  if(btn) btn.addEventListener('click', async ()=>{
-    const jour = document.getElementById('champEdtJour').value;
-    const debut = document.getElementById('champEdtDebut').value;
-    const fin = document.getElementById('champEdtFin').value;
-    const matiere = document.getElementById('champEdtMatiere').value.trim();
-    const ens = document.getElementById('champEdtEns').value;
-    if(!debut || !fin || !matiere){ alert('Merci de renseigner horaire et matière.'); return; }
-    DATA.emploiDuTemps.push({id:uid(), classeId, jour, heureDebut:debut, heureFin:fin, matiere, enseignantId:ens, updatedAt:maintenant(), deleted:false});
-    await persister();
-    rendreZoneEDT(classeId);
-  });
-  document.querySelectorAll('[data-suppr-edt]').forEach(b=>{
-    b.addEventListener('click', async ()=>{
-      if(!confirm('Supprimer ce créneau ?')) return;
-      const l = DATA.emploiDuTemps.find(x=>x.id===b.dataset.supprEdt);
-      if(l){ l.deleted=true; l.updatedAt=maintenant(); await persister(); rendreZoneEDT(classeId); }
-    });
-  });
-}
 
 /* ---------- Export CSV ---------- */
 function exporterCSV(){
