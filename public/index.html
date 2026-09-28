@@ -151,10 +151,12 @@ function fusionnerDonnees(local, distant){
 }
 
 /* ---------- Code d'accès (mémorisé sur l'appareil) ---------- */
-function demanderCodeAcces(){
-  const enregistre = localStorage.getItem('suivi_assiduite_code') || '';
-  const saisi = prompt("Code d'accès de l'établissement (donné par le CPE) :", enregistre);
-  codeAcces = (saisi||'').trim();
+/* ---------- Code d'accès (mémorisé sur l'appareil) ---------- */
+function chargerCodeEnregistre(){
+  return localStorage.getItem('suivi_assiduite_code') || '';
+}
+function enregistrerCodeAcces(v){
+  codeAcces = (v||'').trim();
   try{ localStorage.setItem('suivi_assiduite_code', codeAcces); }catch(e){}
 }
 
@@ -262,6 +264,17 @@ function vueAccueil(){
   <p>Cet outil permet aux <strong>CAE</strong> de relever la présence, les retards et les absences des enseignants dans les classes qui leur sont assignées, et aux <strong>CPE</strong> de configurer les classes, l'emploi du temps, les affectations et de suivre les relevés.</p>
   <p class="note">Les données sont stockées en ligne : chacun peut se connecter depuis son téléphone ou son ordinateur, avec ou sans le WiFi du collège.</p></div>`;
 
+  html += `<div class="carte"><h2>Connexion au serveur</h2>`;
+  if(connecteServeur){
+    html += `<p class="note">✅ Connecté au serveur.</p>`;
+  }else{
+    html += `<div class="alerte">⚠️ Non connecté. Vérifiez le code d'accès ci-dessous (donné par un CPE) et votre connexion internet.</div>`;
+  }
+  html += `<div class="ligne">
+      <div><label>Code d'accès de l'établissement</label><input type="text" id="champCodeAcces" value="${echap(codeAcces)}" placeholder="ex: college2026"></div>
+      <div style="align-self:flex-end;"><button class="btn" id="btnEnregistrerCode">Se connecter</button></div>
+    </div></div>`;
+
   html += `<div class="carte"><h2>Qui êtes-vous ?</h2>`;
   if(PROFIL){
     html += `<p>Connecté en tant que <strong>${echap(PROFIL.role)} — ${echap(PROFIL.nom)}</strong>.</p>
@@ -281,10 +294,6 @@ function vueAccueil(){
     <p class="petit-texte">Les CAE n'ont pas de mot de passe. Les CPE doivent saisir leur mot de passe (défini dans Configuration → CAE &amp; CPE). Si votre nom n'apparaît pas dans la liste, demandez à un CPE de l'ajouter.</p>`;
   }
   html += `</div>`;
-
-  html += `<div class="carte"><h2>Connexion au serveur</h2>
-    <p class="note">Les données sont stockées sur un serveur en ligne : tout le monde peut se connecter depuis n'importe où (WiFi ou données mobiles), pas besoin d'être sur le même réseau.</p>
-    <button class="btn secondaire" id="btnChangerCode">🔑 Changer le code d'accès</button></div>`;
   return html;
 }
 
@@ -687,8 +696,13 @@ function attacherEvenements(){
   const btnChanger = document.getElementById('btnChangerProfil');
   if(btnChanger) btnChanger.addEventListener('click', ()=>{ PROFIL=null; try{sessionStorage.removeItem('profilCourant');}catch(e){} render(); });
 
-  const btnCode = document.getElementById('btnChangerCode');
-  if(btnCode) btnCode.addEventListener('click', async ()=>{ demanderCodeAcces(); await chargerDepuisServeur(); });
+  const btnCode = document.getElementById('btnEnregistrerCode');
+  if(btnCode) btnCode.addEventListener('click', async ()=>{
+    enregistrerCodeAcces(document.getElementById('champCodeAcces').value);
+    await chargerDepuisServeur();
+    if(!connecteServeur) alert("Connexion impossible : vérifiez le code d'accès (exactement comme défini par le CPE) et votre connexion internet.");
+    render();
+  });
 
   // Sous-onglets config
   document.querySelectorAll('[data-sc]').forEach(b=>{
@@ -958,11 +972,11 @@ async function demarrer(){
     const p = sessionStorage.getItem('profilCourant');
     if(p) PROFIL = JSON.parse(p);
   }catch(e){}
-  // code d'accès mémorisé sur cet appareil, sinon on le demande
-  codeAcces = localStorage.getItem('suivi_assiduite_code') || '';
+  // code d'accès mémorisé sur cet appareil (formulaire visible sur l'accueil s'il manque ou est invalide)
+  codeAcces = chargerCodeEnregistre();
   render();
-  if(!codeAcces) demanderCodeAcces();
   await chargerDepuisServeur();
+  render();
   demarrerPolling();
 }
 
