@@ -19,6 +19,10 @@ if (!MONGODB_URI) {
 
 const app = express();
 app.use(express.json({ limit: '5mb' }));
+app.use((req, res, next) => {
+  console.log(new Date().toISOString(), req.method, req.path);
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 
 let collection;
@@ -69,7 +73,10 @@ function fusionnerDonnees(local, distant) {
 function verifierCode(req, res, next) {
   if (!ACCESS_CODE) return next();
   const code = req.get('x-access-code') || '';
-  if (code !== ACCESS_CODE) return res.status(401).json({ erreur: 'Code d\'accès invalide.' });
+  if (code !== ACCESS_CODE) {
+    console.warn('Code d\'accès refusé pour', req.path, '— reçu:', JSON.stringify(code));
+    return res.status(401).json({ erreur: 'Code d\'accès invalide.' });
+  }
   next();
 }
 
