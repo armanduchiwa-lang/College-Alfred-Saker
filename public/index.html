@@ -584,7 +584,7 @@ function vueSuivi(){
     return cl && cl.cycleId===filtreCycle;
   };
 
-  let releves = DATA.releves.filter(r=>!r.deleted && r.date>=debut && r.date<=fin && classeDansCycle(r.classeId));
+  let releves = DATA.releves.filter(r=>!r.deleted && r.date>=debut && r.date<=fin && classeDansCycle(r.classeId) && r.statut!=='P');
   if(filtreClasse) releves = releves.filter(r=>r.classeId===filtreClasse);
   if(filtreEns) releves = releves.filter(r=>r.enseignantId===filtreEns);
   if(filtreCAE) releves = releves.filter(r=>r.caeId===filtreCAE);
@@ -638,7 +638,7 @@ function vueSuivi(){
     html += `</tbody></table></div>`;
   }
 
-  html += `<div class="carte"><h2>Détail des relevés (${releves.length})</h2>
+  html += `<div class="carte"><h2>Détail des absences et retards (${releves.length})</h2>
     <table><thead><tr><th>Date</th><th>Jour</th><th>Cycle</th><th>Classe</th><th>Horaire</th><th>Matière</th><th>Enseignant</th><th>Statut</th><th>Arrivée</th><th>CAE</th><th>Commentaire</th></tr></thead><tbody>`;
   releves.forEach(r=>{
     const creneau = DATA.emploiDuTemps.find(c=>c.id===r.creneauId);
@@ -654,7 +654,7 @@ function vueSuivi(){
       <td>${r.heureArrivee||''}</td><td>${cae?echap(cae.nom):'—'}</td><td>${echap(r.commentaire)}</td>
     </tr>`;
   });
-  if(!releves.length) html += `<tr><td colspan="11" class="note">Aucun relevé.</td></tr>`;
+  if(!releves.length) html += `<tr><td colspan="11" class="note">Aucune absence ni retard sur cette période.</td></tr>`;
   html += `</tbody></table></div>`;
   return html;
 }
@@ -937,7 +937,7 @@ function exporterCSV(){
   const filtreClasse = document.getElementById('filtreClasse').value;
   const filtreEns = document.getElementById('filtreEns').value;
   const filtreCAE = document.getElementById('filtreCAE').value;
-  let releves = DATA.releves.filter(r=>!r.deleted && r.date>=debut && r.date<=fin);
+  let releves = DATA.releves.filter(r=>!r.deleted && r.date>=debut && r.date<=fin && r.statut!=='P');
   if(filtreCycle) releves = releves.filter(r=>{ const cl=DATA.classes.find(c=>c.id===r.classeId); return cl && cl.cycleId===filtreCycle; });
   if(filtreClasse) releves = releves.filter(r=>r.classeId===filtreClasse);
   if(filtreEns) releves = releves.filter(r=>r.enseignantId===filtreEns);
