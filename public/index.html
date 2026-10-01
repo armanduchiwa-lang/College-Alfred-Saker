@@ -62,6 +62,10 @@
   .surbrillance{background:#fee2e2 !important;}
   .cache{display:none !important;}
   .petit-texte{font-size:.78rem;color:#777;}
+  .tag.G{background:#ede9fe;color:#5b21b6;margin-right:6px;}
+  tr.mixte td{background:#fffbeb;}
+  tr.mixte-debut td{border-top:2px solid #f59e0b;}
+  .avert-conflit{font-size:.75rem;color:var(--orange);margin-top:3px;}
 </style>
 </head>
 <body>
@@ -119,6 +123,7 @@ let PROFIL = null; // {role:'CAE'|'CPE', id, nom}
 let ONGLET = 'accueil';
 let SOUS_ONGLET_CONFIG = 'classes';
 let JOUR_EDT_ACTIF = 'Lundi';
+let EXTRA_LIGNES = {}; // nombre de lignes (groupes) voulu par créneau horaire : classe|jour|début
 let codeAcces = '';
 let connecteServeur = false;
 let derniereSynchro = null;
@@ -389,8 +394,33 @@ const HORAIRES_FIXES = [
   ['10:20','11:10'], ['11:10','12:00'],
   ['12:35','13:25'], ['13:25','14:15'], ['14:15','15:05'], ['15:05','15:55']
 ];
-function idCreneauFixe(classeId, jour, heureDebut){
-  return 'edt_'+classeId+'_'+jour+'_'+heureDebut.replace(':','');
+function idCreneauFixe(classeId, jour, heureDebut, rang){
+  const base = 'edt_'+classeId+'_'+jour+'_'+heureDebut.replace(':','');
+  return rang>0 ? base+'_g'+rang : base; // rang 0 = id historique (compatible avec les données existantes)
+}
+/* Toutes les entrées d'un même créneau horaire d'une classe (plusieurs si classe mixte) */
+function creneauxDuSlot(classeId, jour, debut, fin, inclureSupprimes){
+  return DATA.emploiDuTemps
+    .filter(x=>x.classeId===classeId && x.jour===jour && x.heureDebut===debut && x.heureFin===fin && (inclureSupprimes || !x.deleted))
+    .sort((a,b)=>(a.rang||0)-(b.rang||0));
+}
+/* Libellé du groupe, uniquement si le créneau est en classe mixte (sinon chaîne vide) */
+function libelleGroupe(cr){
+  if(!cr) return '';
+  const nb = creneauxDuSlot(cr.classeId, cr.jour, cr.heureDebut, cr.heureFin).length;
+  if(nb<2) return '';
+  return (cr.groupe && cr.groupe.trim()) ? cr.groupe.trim() : 'Groupe '+((cr.rang||0)+1);
+}
+/* Classes où le même enseignant est déjà placé à la même heure (avertissement non bloquant) */
+function conflitsEnseignant(l){
+  if(!l || !l.enseignantId) return [];
+  return DATA.emploiDuTemps
+    .filter(x=>!x.deleted && x.id!==l.id && x.jour===l.jour && x.heureDebut===l.heureDebut && x.enseignantId===l.enseignantId)
+    .map(x=>{
+      if(x.classeId===l.classeId) return 'un autre groupe de cette classe';
+      const cl = DATA.classes.find(c=>c.id===x.classeId);
+      return cl ? cl.nom : 'une autre classe';
+    });
 }
 function vueConfigEDT(){
   const classes = DATA.classes.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
@@ -405,38 +435,90 @@ function vueConfigEDT(){
 function rendreZoneEDT(classeId){
   const enseignants = DATA.enseignants.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
   const jour = JOUR_EDT_ACTIF;
-  let html = `<table><thead><tr><th>Horaire</th><th>Matière</th><th>Enseignant</th></tr></thead><tbody>`;
+  let html = `<table><thead><tr><th>Horaire</th><th>Groupe</th><th>Matière</th><th>Enseignant</th><th></th></tr></thead><tbody>`;
   HORAIRES_FIXES.forEach(([debut, fin])=>{
-    const l = DATA.emploiDuTemps.find(x=>!x.deleted && x.classeId===classeId && x.jour===jour && x.heureDebut===debut && x.heureFin===fin);
-    html += `<tr>
-      <td>${debut}–${fin}</td>
-      <td><input type="text" class="champMatiereFixe" data-classe="${classeId}" data-jour="${jour}" data-debut="${debut}" data-fin="${fin}" value="${l?echap(l.matiere):''}" placeholder="Matière"></td>
-      <td><select class="champEnsFixe" data-classe="${classeId}" data-jour="${jour}" data-debut="${debut}" data-fin="${fin}">
-        <option value="">—</option>${enseignants.map(e=>`<option value="${e.id}" ${l&&l.enseignantId===e.id?'selected':''}>${echap(e.nom)}</option>`).join('')}
-      </select></td>
-    </tr>`;
+    const tous = creneauxDuSlot(classeId, jour, debut, fin, true);
+    const actifs = tous.filter(x=>!x.deleted);
+    const cle = classeId+'|'+jour+'|'+debut;
+    const nbVoulu = EXTRA_LIGNES[cle] || 1;
+    const lignes = actifs.map(x=>({rang:x.rang||0, l:x}));
+    if(!lignes.length) lignes.push({rang:0, l:null});
+    const rangsPris = new Set(tous.map(x=>x.rang||0));
+    lignes.forEach(it=>rangsPris.add(it.rang));
+    let prochain = Math.max.apply(null, Array.from(rangsPris))+1;
+    while(lignes.length < nbVoulu){ lignes.push({rang:prochain++, l:null}); }
+    const nb = lignes.length;
+    const mixte = nb>1;
+    lignes.forEach((it,i)=>{
+      const l = it.l;
+      const attr = `data-classe="${classeId}" data-jour="${jour}" data-debut="${debut}" data-fin="${fin}" data-rang="${it.rang}"`;
+      const conflits = conflitsEnseignant(l);
+      let actions = '';
+      if(mixte) actions += `<button class="btn danger petit btnRetirerGroupe" ${attr} data-nb="${nb}">✖ Retirer</button> `;
+      if(i===nb-1) actions += `<button class="btn secondaire petit btnAjoutGroupe" data-classe="${classeId}" data-jour="${jour}" data-debut="${debut}" data-nb="${nb}">➕ ${mixte?'Groupe':'Classe mixte'}</button>`;
+      html += `<tr class="${mixte?'mixte'+(i===0?' mixte-debut':''):''}">
+        ${i===0?`<td rowspan="${nb}">${debut}–${fin}</td>`:''}
+        <td>${mixte?`<input type="text" class="champGroupeFixe" ${attr} value="${l?echap(l.groupe||''):''}" placeholder="Groupe ${i+1}" style="width:110px;">`:'<span class="petit-texte">—</span>'}</td>
+        <td><input type="text" class="champMatiereFixe" ${attr} value="${l?echap(l.matiere):''}" placeholder="Matière"></td>
+        <td><select class="champEnsFixe" ${attr}>
+          <option value="">—</option>${enseignants.map(e=>`<option value="${e.id}" ${l&&l.enseignantId===e.id?'selected':''}>${echap(e.nom)}</option>`).join('')}
+        </select>${conflits.length?`<div class="avert-conflit">⚠️ Cet enseignant est déjà placé à cette heure : ${conflits.map(echap).join(', ')}</div>`:''}</td>
+        <td>${actions}</td>
+      </tr>`;
+    });
   });
-  html += `</tbody></table><p class="petit-texte">Laissez la matière vide et l'enseignant sur « — » pour un créneau libre (pas de cours).</p>`;
+  html += `</tbody></table>
+    <p class="petit-texte">Laissez la matière vide et l'enseignant sur « — » pour un créneau libre (pas de cours).</p>
+    <p class="petit-texte"><strong>Classe mixte</strong> : si, à la même heure, une partie de la classe a cours avec un enseignant et l'autre partie travaille une autre matière avec un autre enseignant, cliquez sur « ➕ Classe mixte » à droite de l'horaire, puis renseignez la matière et l'enseignant de chaque groupe (nom du groupe facultatif, ex. « Groupe A »).</p>`;
   document.getElementById('zoneEDT').innerHTML = html;
   attacherEvenementsEDT();
 }
-async function majCreneauFixe(classeId, jour, debut, fin, champ, valeur){
-  let l = DATA.emploiDuTemps.find(x=>x.classeId===classeId && x.jour===jour && x.heureDebut===debut && x.heureFin===fin);
+async function majCreneauFixe(classeId, jour, debut, fin, rang, champ, valeur){
+  rang = parseInt(rang)||0;
+  const id = idCreneauFixe(classeId, jour, debut, rang);
+  let l = DATA.emploiDuTemps.find(x=>x.id===id);
   if(!l){
-    l = {id:idCreneauFixe(classeId,jour,debut), classeId, jour, heureDebut:debut, heureFin:fin, matiere:'', enseignantId:'', updatedAt:maintenant(), deleted:false};
+    l = {id, classeId, jour, heureDebut:debut, heureFin:fin, rang, groupe:'', matiere:'', enseignantId:'', updatedAt:maintenant(), deleted:false};
     DATA.emploiDuTemps.push(l);
   }
+  l.rang = rang;
   l[champ] = valeur;
   l.deleted = !(l.matiere && l.matiere.trim()) && !l.enseignantId;
   l.updatedAt = maintenant();
   await persister();
 }
+async function retirerGroupeEDT(classeId, jour, debut, fin, rang, nb){
+  const l = DATA.emploiDuTemps.find(x=>x.id===idCreneauFixe(classeId, jour, debut, rang));
+  if(l){ l.deleted = true; l.updatedAt = maintenant(); }
+  EXTRA_LIGNES[classeId+'|'+jour+'|'+debut] = Math.max(1, nb-1);
+  await persister();
+  rendreZoneEDT(classeId);
+}
 function attacherEvenementsEDT(){
+  const lire = el => [el.dataset.classe, el.dataset.jour, el.dataset.debut, el.dataset.fin, el.dataset.rang];
   document.querySelectorAll('.champMatiereFixe').forEach(inp=>{
-    inp.addEventListener('change', ()=> majCreneauFixe(inp.dataset.classe, inp.dataset.jour, inp.dataset.debut, inp.dataset.fin, 'matiere', inp.value.trim()));
+    inp.addEventListener('change', ()=> majCreneauFixe(...lire(inp), 'matiere', inp.value.trim()));
+  });
+  document.querySelectorAll('.champGroupeFixe').forEach(inp=>{
+    inp.addEventListener('change', ()=> majCreneauFixe(...lire(inp), 'groupe', inp.value.trim()));
   });
   document.querySelectorAll('.champEnsFixe').forEach(sel=>{
-    sel.addEventListener('change', ()=> majCreneauFixe(sel.dataset.classe, sel.dataset.jour, sel.dataset.debut, sel.dataset.fin, 'enseignantId', sel.value));
+    sel.addEventListener('change', async ()=>{
+      await majCreneauFixe(...lire(sel), 'enseignantId', sel.value);
+      rendreZoneEDT(sel.dataset.classe); // met à jour l'avertissement de conflit éventuel
+    });
+  });
+  document.querySelectorAll('.btnAjoutGroupe').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      EXTRA_LIGNES[b.dataset.classe+'|'+b.dataset.jour+'|'+b.dataset.debut] = (parseInt(b.dataset.nb)||1)+1;
+      rendreZoneEDT(b.dataset.classe);
+    });
+  });
+  document.querySelectorAll('.btnRetirerGroupe').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      if(!confirm('Retirer ce groupe de cet horaire ?')) return;
+      retirerGroupeEDT(b.dataset.classe, b.dataset.jour, b.dataset.debut, b.dataset.fin, b.dataset.rang, parseInt(b.dataset.nb)||1);
+    });
   });
 }
 function vueConfigPersonnes(){
@@ -515,21 +597,24 @@ function vueSaisie(){
 
   mesClasses.forEach(cl=>{
     const creneaux = DATA.emploiDuTemps.filter(l=>!l.deleted && l.classeId===cl.id && l.jour===jour)
-      .sort((a,b)=>a.heureDebut.localeCompare(b.heureDebut));
+      .sort((a,b)=>a.heureDebut.localeCompare(b.heureDebut) || (a.rang||0)-(b.rang||0));
     html += `<div class="carte"><h2>${echap(cl.nom)}</h2>`;
     if(!creneaux.length){
       html += `<p class="note">Aucun cours prévu ce jour pour cette classe.</p></div>`;
       return;
     }
+    if(creneaux.some(cr=>libelleGroupe(cr))) html += `<p class="petit-texte">Certaines heures sont en <strong>classe mixte</strong> (plusieurs groupes, plusieurs enseignants) : relevez chaque enseignant séparément.</p>`;
     html += `<table><thead><tr><th>Horaire</th><th>Matière</th><th>Enseignant</th><th>Statut</th><th>Détails</th></tr></thead><tbody>`;
-    creneaux.forEach(cr=>{
+    creneaux.forEach((cr,idx)=>{
+      const lib = libelleGroupe(cr);
+      const debutBloc = idx===0 || creneaux[idx-1].heureDebut!==cr.heureDebut;
       const ens = DATA.enseignants.find(e=>e.id===cr.enseignantId);
       const releveId = cr.id+'__'+date;
       const releve = DATA.releves.find(r=>r.id===releveId && !r.deleted);
       const statut = releve ? releve.statut : '';
-      html += `<tr>
+      html += `<tr class="${lib?'mixte'+(debutBloc?' mixte-debut':''):''}">
         <td>${cr.heureDebut}–${cr.heureFin}</td>
-        <td>${echap(cr.matiere)}</td>
+        <td>${lib?`<span class="tag G">${echap(lib)}</span>`:''}${echap(cr.matiere)}</td>
         <td>${ens?echap(ens.nom):'<span class="note">Non défini</span>'}</td>
         <td><div class="statut-boutons" data-creneau="${cr.id}" data-date="${date}">
           <button class="sel-P ${statut==='P'?'actif':''}" data-statut="P">Présent</button>
@@ -639,7 +724,7 @@ function vueSuivi(){
   }
 
   html += `<div class="carte"><h2>Détail des absences et retards (${releves.length})</h2>
-    <table><thead><tr><th>Date</th><th>Jour</th><th>Cycle</th><th>Classe</th><th>Horaire</th><th>Matière</th><th>Enseignant</th><th>Statut</th><th>Arrivée</th><th>CAE</th><th>Commentaire</th></tr></thead><tbody>`;
+    <table><thead><tr><th>Date</th><th>Jour</th><th>Cycle</th><th>Classe</th><th>Groupe</th><th>Horaire</th><th>Matière</th><th>Enseignant</th><th>Statut</th><th>Arrivée</th><th>CAE</th><th>Commentaire</th></tr></thead><tbody>`;
   releves.forEach(r=>{
     const creneau = DATA.emploiDuTemps.find(c=>c.id===r.creneauId);
     const classe = DATA.classes.find(c=>c.id===r.classeId);
@@ -648,13 +733,14 @@ function vueSuivi(){
     const cae = DATA.caes.find(p=>p.id===r.caeId);
     html += `<tr>
       <td>${r.date}</td><td>${jourDeDate(r.date)}</td><td>${cycle?echap(cycle.nom):'—'}</td><td>${classe?echap(classe.nom):'—'}</td>
+      <td>${creneau?echap(libelleGroupe(creneau)):''}</td>
       <td>${creneau?creneau.heureDebut+'–'+creneau.heureFin:'—'}</td>
       <td>${creneau?echap(creneau.matiere):'—'}</td><td>${ens?echap(ens.nom):'—'}</td>
       <td><span class="tag ${r.statut}">${r.statut==='P'?'Présent':r.statut==='R'?'Retard':'Absent'}</span></td>
       <td>${r.heureArrivee||''}</td><td>${cae?echap(cae.nom):'—'}</td><td>${echap(r.commentaire)}</td>
     </tr>`;
   });
-  if(!releves.length) html += `<tr><td colspan="11" class="note">Aucune absence ni retard sur cette période.</td></tr>`;
+  if(!releves.length) html += `<tr><td colspan="12" class="note">Aucune absence ni retard sur cette période.</td></tr>`;
   html += `</tbody></table></div>`;
   return html;
 }
@@ -943,14 +1029,14 @@ function exporterCSV(){
   if(filtreEns) releves = releves.filter(r=>r.enseignantId===filtreEns);
   if(filtreCAE) releves = releves.filter(r=>r.caeId===filtreCAE);
   releves.sort((a,b)=>a.date.localeCompare(b.date));
-  let csv = 'Date;Jour;Cycle;Classe;Horaire;Matiere;Enseignant;Statut;HeureArrivee;CAE;Commentaire\n';
+  let csv = 'Date;Jour;Cycle;Classe;Groupe;Horaire;Matiere;Enseignant;Statut;HeureArrivee;CAE;Commentaire\n';
   releves.forEach(r=>{
     const creneau = DATA.emploiDuTemps.find(c=>c.id===r.creneauId);
     const classe = DATA.classes.find(c=>c.id===r.classeId);
     const cycle = classe ? DATA.cycles.find(cy=>cy.id===classe.cycleId) : null;
     const ens = DATA.enseignants.find(e=>e.id===r.enseignantId);
     const cae = DATA.caes.find(p=>p.id===r.caeId);
-    const ligne = [r.date, jourDeDate(r.date), cycle?cycle.nom:'', classe?classe.nom:'', creneau?creneau.heureDebut+'-'+creneau.heureFin:'', creneau?creneau.matiere:'', ens?ens.nom:'', r.statut, r.heureArrivee||'', cae?cae.nom:'', (r.commentaire||'').replace(/;/g,',')];
+    const ligne = [r.date, jourDeDate(r.date), cycle?cycle.nom:'', classe?classe.nom:'', creneau?libelleGroupe(creneau).replace(/;/g,','):'', creneau?creneau.heureDebut+'-'+creneau.heureFin:'', creneau?creneau.matiere:'', ens?ens.nom:'', r.statut, r.heureArrivee||'', cae?cae.nom:'', (r.commentaire||'').replace(/;/g,',')];
     csv += ligne.join(';')+'\n';
   });
   const blob = new Blob(['\ufeff'+csv], {type:'text/csv'});
