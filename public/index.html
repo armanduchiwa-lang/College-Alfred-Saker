@@ -107,6 +107,32 @@ function todayStr(){
   const d = new Date();
   return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
 }
+function fmtDateCourte(dateStr){
+  const p = (dateStr||'').split('-');
+  return p.length===3 ? p[2]+'/'+p[1]+'/'+p[0] : (dateStr||'');
+}
+function enMinutes(h){
+  if(!h || !/^\d{1,2}:\d{2}$/.test(h)) return null;
+  const p = h.split(':').map(Number);
+  return p[0]*60+p[1];
+}
+/* Minutes de retard = heure d'arrivée - heure de début du cours (jamais négatif) */
+function calculerRetardMin(heureDebut, heureArrivee){
+  const d = enMinutes(heureDebut), a = enMinutes(heureArrivee);
+  if(d==null || a==null) return null;
+  return Math.max(0, a-d);
+}
+function minutesRetardReleve(r, creneau){
+  if(!r || r.statut!=='R' || !creneau) return '';
+  const m = calculerRetardMin(creneau.heureDebut, r.heureArrivee);
+  return m==null ? '' : m;
+}
+function texteBadgeRetard(heureDebut, heureArrivee){
+  const m = calculerRetardMin(heureDebut, heureArrivee);
+  if(m==null) return "⏱ Saisissez l'heure d'arrivée";
+  if(enMinutes(heureArrivee) < enMinutes(heureDebut)) return "⚠️ Arrivée avant le début du cours (0 min)";
+  return "⏱ "+m+" min de retard";
+}
 function echap(s){
   return (s==null?'':String(s)).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
@@ -622,8 +648,12 @@ function vueSaisie(){
           <button class="sel-A ${statut==='A'?'actif':''}" data-statut="A">Absent</button>
         </div></td>
         <td>
-          <input type="time" class="champHeureArrivee ${statut==='R'?'':'cache'}" data-creneau="${cr.id}" data-date="${date}" value="${releve&&releve.heureArrivee?releve.heureArrivee:''}" placeholder="Heure d'arrivée">
-          <input type="text" class="champCommentaire" data-creneau="${cr.id}" data-date="${date}" placeholder="Commentaire (optionnel)" value="${releve&&releve.commentaire?echap(releve.commentaire):''}" style="width:160px;">
+          <div class="zoneRetard ${statut==='R'?'':'cache'}" style="margin-bottom:6px;">
+            <label>Heure d'arrivée de l'enseignant (cours à ${cr.heureDebut})</label>
+            <input type="time" class="champHeureArrivee" data-creneau="${cr.id}" data-date="${date}" data-debut="${cr.heureDebut}" value="${releve&&releve.heureArrivee?releve.heureArrivee:''}">
+            <span class="tag R badgeMinutes">${texteBadgeRetard(cr.heureDebut, releve?releve.heureArrivee:'')}</span>
+          </div>
+          <input type="text" class="champCommentaire" data-creneau="${cr.id}" data-date="${date}" placeholder="Commentaire (optionnel)" value="${releve&&releve.commentaire?echap(releve.commentaire):''}" style="width:200px;">
         </td>
       </tr>`;
     });
@@ -661,6 +691,7 @@ function vueSuivi(){
     <div><label>CAE</label><select id="filtreCAE"><option value="">Tous</option>${caes.map(p=>`<option value="${p.id}" ${filtreCAE===p.id?'selected':''}>${echap(p.nom)}</option>`).join('')}</select></div>
     <div style="align-self:flex-end;"><button class="btn secondaire" id="btnAppliquerFiltres">Appliquer</button></div>
     <div style="align-self:flex-end;"><button class="btn secondaire" id="btnExportCSV">⬇️ Export CSV</button></div>
+    <div style="align-self:flex-end;"><button class="btn" id="btnExportWord">📄 Export Word</button></div>
   </div></div>`;
 
   const classeDansCycle = (classeId)=>{
@@ -724,25 +755,64 @@ function vueSuivi(){
   }
 
   html += `<div class="carte"><h2>Détail des absences et retards (${releves.length})</h2>
-    <table><thead><tr><th>Date</th><th>Jour</th><th>Cycle</th><th>Classe</th><th>Groupe</th><th>Horaire</th><th>Matière</th><th>Enseignant</th><th>Statut</th><th>Arrivée</th><th>CAE</th><th>Commentaire</th></tr></thead><tbody>`;
-  releves.forEach(r=>{
-    const creneau = DATA.emploiDuTemps.find(c=>c.id===r.creneauId);
-    const classe = DATA.classes.find(c=>c.id===r.classeId);
-    const cycle = classe ? DATA.cycles.find(cy=>cy.id===classe.cycleId) : null;
-    const ens = DATA.enseignants.find(e=>e.id===r.enseignantId);
-    const cae = DATA.caes.find(p=>p.id===r.caeId);
+    <div style="overflow-x:auto;"><table><thead><tr>${COLONNES_DETAIL.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>`;
+  lignesDetail(releves).forEach(l=>{
+    const tag = l[5]==='Retard' ? 'R' : 'A';
     html += `<tr>
-      <td>${r.date}</td><td>${jourDeDate(r.date)}</td><td>${cycle?echap(cycle.nom):'—'}</td><td>${classe?echap(classe.nom):'—'}</td>
-      <td>${creneau?echap(libelleGroupe(creneau)):''}</td>
-      <td>${creneau?creneau.heureDebut+'–'+creneau.heureFin:'—'}</td>
-      <td>${creneau?echap(creneau.matiere):'—'}</td><td>${ens?echap(ens.nom):'—'}</td>
-      <td><span class="tag ${r.statut}">${r.statut==='P'?'Présent':r.statut==='R'?'Retard':'Absent'}</span></td>
-      <td>${r.heureArrivee||''}</td><td>${cae?echap(cae.nom):'—'}</td><td>${echap(r.commentaire)}</td>
+      <td>${echap(l[0])}</td><td>${echap(l[1])}</td><td>${echap(l[2])}</td><td>${echap(l[3])}</td><td>${echap(l[4])}</td>
+      <td><span class="tag ${tag}">${echap(l[5])}</span></td>
+      <td>${echap(l[6])}</td><td>${echap(l[7])}</td><td>${echap(l[8])}</td>
     </tr>`;
   });
-  if(!releves.length) html += `<tr><td colspan="12" class="note">Aucune absence ni retard sur cette période.</td></tr>`;
-  html += `</tbody></table></div>`;
+  if(!releves.length) html += `<tr><td colspan="9" class="note">Aucune absence ni retard sur cette période.</td></tr>`;
+  html += `</tbody></table></div></div>`;
   return html;
+}
+
+/* ---------- Tableau de détail (même structure que le modèle Word) ---------- */
+const COLONNES_DETAIL = ['Date','Classe','Jour','Horaire','Enseignant','Statut','Nombre de min de retard','Commentaire','CAE'];
+function lignesDetail(releves){
+  return releves.map(r=>{
+    const creneau = DATA.emploiDuTemps.find(c=>c.id===r.creneauId);
+    const classe = DATA.classes.find(c=>c.id===r.classeId);
+    const ens = DATA.enseignants.find(e=>e.id===r.enseignantId);
+    const cae = DATA.caes.find(p=>p.id===r.caeId);
+    const grp = creneau ? libelleGroupe(creneau) : '';
+    const nomClasse = (classe?classe.nom:'—') + (grp ? ' ('+grp+')' : '');
+    const min = minutesRetardReleve(r, creneau);
+    return [
+      fmtDateCourte(r.date),
+      nomClasse,
+      jourDeDate(r.date),
+      creneau ? creneau.heureDebut+'–'+creneau.heureFin : '—',
+      ens ? ens.nom : '—',
+      r.statut==='R' ? 'Retard' : 'Absent',
+      min===''? '' : String(min),
+      r.commentaire || '',
+      cae ? cae.nom : '—'
+    ];
+  });
+}
+/* Relevés (absences + retards) correspondant aux filtres affichés à l'écran */
+function relevesFiltres(){
+  const debut = document.getElementById('filtreDebut').value;
+  const fin = document.getElementById('filtreFin').value;
+  const filtreCycle = document.getElementById('filtreCycle') ? document.getElementById('filtreCycle').value : '';
+  const filtreClasse = document.getElementById('filtreClasse').value;
+  const filtreEns = document.getElementById('filtreEns').value;
+  const filtreCAE = document.getElementById('filtreCAE').value;
+  let releves = DATA.releves.filter(r=>!r.deleted && r.date>=debut && r.date<=fin && (r.statut==='R' || r.statut==='A'));
+  if(filtreCycle) releves = releves.filter(r=>{ const cl=DATA.classes.find(c=>c.id===r.classeId); return cl && cl.cycleId===filtreCycle; });
+  if(filtreClasse) releves = releves.filter(r=>r.classeId===filtreClasse);
+  if(filtreEns) releves = releves.filter(r=>r.enseignantId===filtreEns);
+  if(filtreCAE) releves = releves.filter(r=>r.caeId===filtreCAE);
+  releves.sort((a,b)=> a.date.localeCompare(b.date) || a.creneauId.localeCompare(b.creneauId));
+  return {releves, debut, fin};
+}
+function libelleFiltre(selId, tousLabel){
+  const el = document.getElementById(selId);
+  if(!el || !el.value) return '';
+  return el.options[el.selectedIndex].textContent;
 }
 
 /* ---------- Événements ---------- */
@@ -983,6 +1053,7 @@ function attacherEvenements(){
       let r = DATA.releves.find(x=>x.id===releveId);
       if(!r){ r = {id:releveId, date, creneauId, classeId:cr.classeId, enseignantId:cr.enseignantId, statut:'', heureArrivee:'', commentaire:'', caeId:PROFIL.id, deleted:false}; DATA.releves.push(r); }
       r.statut = btn.dataset.statut;
+      if(r.statut!=='R'){ r.heureArrivee = ''; r.minutesRetard = ''; }
       r.caeId = PROFIL.id;
       r.updatedAt = maintenant();
       r.deleted = false;
@@ -993,7 +1064,15 @@ function attacherEvenements(){
     inp.addEventListener('change', async ()=>{
       const releveId = inp.dataset.creneau+'__'+inp.dataset.date;
       const r = DATA.releves.find(x=>x.id===releveId);
-      if(r){ r.heureArrivee = inp.value; r.updatedAt=maintenant(); await persister(); }
+      const badge = inp.parentElement.querySelector('.badgeMinutes');
+      if(badge) badge.textContent = texteBadgeRetard(inp.dataset.debut, inp.value);
+      if(r){
+        r.heureArrivee = inp.value;
+        const m = calculerRetardMin(inp.dataset.debut, inp.value);
+        r.minutesRetard = (m==null) ? '' : m;
+        r.updatedAt = maintenant();
+        await persister();
+      }
     });
   });
   document.querySelectorAll('.champCommentaire').forEach(inp=>{
@@ -1012,38 +1091,138 @@ function attacherEvenements(){
   if(btnFiltres) btnFiltres.addEventListener('click', render);
   const btnCSV = document.getElementById('btnExportCSV');
   if(btnCSV) btnCSV.addEventListener('click', exporterCSV);
+  const btnWord = document.getElementById('btnExportWord');
+  if(btnWord) btnWord.addEventListener('click', exporterWord);
 }
 
 
 /* ---------- Export CSV ---------- */
-function exporterCSV(){
-  const debut = document.getElementById('filtreDebut').value;
-  const fin = document.getElementById('filtreFin').value;
-  const filtreCycle = document.getElementById('filtreCycle') ? document.getElementById('filtreCycle').value : '';
-  const filtreClasse = document.getElementById('filtreClasse').value;
-  const filtreEns = document.getElementById('filtreEns').value;
-  const filtreCAE = document.getElementById('filtreCAE').value;
-  let releves = DATA.releves.filter(r=>!r.deleted && r.date>=debut && r.date<=fin && r.statut!=='P');
-  if(filtreCycle) releves = releves.filter(r=>{ const cl=DATA.classes.find(c=>c.id===r.classeId); return cl && cl.cycleId===filtreCycle; });
-  if(filtreClasse) releves = releves.filter(r=>r.classeId===filtreClasse);
-  if(filtreEns) releves = releves.filter(r=>r.enseignantId===filtreEns);
-  if(filtreCAE) releves = releves.filter(r=>r.caeId===filtreCAE);
-  releves.sort((a,b)=>a.date.localeCompare(b.date));
-  let csv = 'Date;Jour;Cycle;Classe;Groupe;Horaire;Matiere;Enseignant;Statut;HeureArrivee;CAE;Commentaire\n';
-  releves.forEach(r=>{
-    const creneau = DATA.emploiDuTemps.find(c=>c.id===r.creneauId);
-    const classe = DATA.classes.find(c=>c.id===r.classeId);
-    const cycle = classe ? DATA.cycles.find(cy=>cy.id===classe.cycleId) : null;
-    const ens = DATA.enseignants.find(e=>e.id===r.enseignantId);
-    const cae = DATA.caes.find(p=>p.id===r.caeId);
-    const ligne = [r.date, jourDeDate(r.date), cycle?cycle.nom:'', classe?classe.nom:'', creneau?libelleGroupe(creneau).replace(/;/g,','):'', creneau?creneau.heureDebut+'-'+creneau.heureFin:'', creneau?creneau.matiere:'', ens?ens.nom:'', r.statut, r.heureArrivee||'', cae?cae.nom:'', (r.commentaire||'').replace(/;/g,',')];
-    csv += ligne.join(';')+'\n';
-  });
-  const blob = new Blob(['\ufeff'+csv], {type:'text/csv'});
+function telecharger(blob, nom){
   const a = document.createElement('a');
   a.href = URL.createObjectURL(blob);
-  a.download = 'suivi-assiduite-'+debut+'-au-'+fin+'.csv';
+  a.download = nom;
+  document.body.appendChild(a);
   a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+function exporterCSV(){
+  const f = relevesFiltres();
+  const lignes = lignesDetail(f.releves);
+  const cellule = v => String(v==null?'':v).replace(/;/g,',').replace(/[\r\n]+/g,' ');
+  let csv = COLONNES_DETAIL.join(';')+'\n';
+  lignes.forEach(l=>{ csv += l.map(cellule).join(';')+'\n'; });
+  telecharger(new Blob(['\ufeff'+csv], {type:'text/csv'}), 'suivi-assiduite-'+f.debut+'-au-'+f.fin+'.csv');
+}
+
+/* ---------- Export Word (.docx) — généré sans bibliothèque externe ---------- */
+function crc32(octets){
+  if(!crc32.table){
+    crc32.table = [];
+    for(let n=0;n<256;n++){
+      let c = n;
+      for(let k=0;k<8;k++) c = (c&1) ? (0xEDB88320 ^ (c>>>1)) : (c>>>1);
+      crc32.table[n] = c>>>0;
+    }
+  }
+  let crc = -1;
+  for(let i=0;i<octets.length;i++) crc = crc32.table[(crc ^ octets[i]) & 0xFF] ^ (crc>>>8);
+  return (crc ^ -1)>>>0;
+}
+function creerZip(fichiers, mime){
+  const enc = new TextEncoder();
+  const u16 = n => [n&255, (n>>>8)&255];
+  const u32 = n => [n&255, (n>>>8)&255, (n>>>16)&255, (n>>>24)&255];
+  const parts = [], central = [];
+  let offset = 0;
+  fichiers.forEach(f=>{
+    const nom = enc.encode(f.nom), data = enc.encode(f.contenu), crc = crc32(data);
+    const local = new Uint8Array([0x50,0x4b,0x03,0x04, ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0x21),
+      ...u32(crc), ...u32(data.length), ...u32(data.length), ...u16(nom.length), ...u16(0)]);
+    parts.push(local, nom, data);
+    central.push({nom, crc, taille:data.length, offset});
+    offset += local.length + nom.length + data.length;
+  });
+  let tailleCentral = 0;
+  central.forEach(c=>{
+    const h = new Uint8Array([0x50,0x4b,0x01,0x02, ...u16(20), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0x21),
+      ...u32(c.crc), ...u32(c.taille), ...u32(c.taille), ...u16(c.nom.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(c.offset)]);
+    parts.push(h, c.nom);
+    tailleCentral += h.length + c.nom.length;
+  });
+  parts.push(new Uint8Array([0x50,0x4b,0x05,0x06, ...u16(0), ...u16(0), ...u16(central.length), ...u16(central.length),
+    ...u32(tailleCentral), ...u32(offset), ...u16(0)]));
+  return new Blob(parts, {type:mime});
+}
+function xmlEchap(t){
+  return String(t==null?'':t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'');
+}
+function wParagraphe(texte, opts){
+  opts = opts || {};
+  const rpr = '<w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:cs="Calibri"/>'+(opts.gras?'<w:b/>':'')+
+    (opts.couleur?'<w:color w:val="'+opts.couleur+'"/>':'')+'<w:sz w:val="'+(opts.taille||20)+'"/></w:rPr>';
+  return '<w:p><w:pPr><w:spacing w:before="'+(opts.avant||0)+'" w:after="'+(opts.apres||60)+'"/>'+
+    (opts.centre?'<w:jc w:val="center"/>':'')+'</w:pPr><w:r>'+rpr+'<w:t xml:space="preserve">'+xmlEchap(texte)+'</w:t></w:r></w:p>';
+}
+function wCellule(texte, largeur, entete, centre){
+  const opts = entete ? {gras:true, couleur:'FFFFFF', taille:19, apres:0, centre:true} : {taille:19, apres:0, centre:centre};
+  return '<w:tc><w:tcPr><w:tcW w:w="'+largeur+'" w:type="dxa"/>'+
+    (entete?'<w:shd w:val="clear" w:color="auto" w:fill="1E3A5F"/>':'')+
+    '<w:vAlign w:val="center"/></w:tcPr>'+wParagraphe(texte, opts)+'</w:tc>';
+}
+function construireDocx(titre, sousTitres, colonnes, lignes, bilan){
+  // Page A4 paysage (largeur utile = 16838 - 2*720 = 15398 twips)
+  const largeurs = [1300,1900,1200,1500,2500,1200,1500,2898,1400];
+  const bord = ['top','left','bottom','right','insideH','insideV'].map(b=>'<w:'+b+' w:val="single" w:sz="4" w:space="0" w:color="808080"/>').join('');
+  let corps = wParagraphe(titre, {gras:true, taille:32, couleur:'1E3A5F', apres:80});
+  sousTitres.forEach(t=>{ corps += wParagraphe(t, {taille:21, apres:40}); });
+  corps += wParagraphe('', {apres:80});
+  let tbl = '<w:tbl><w:tblPr><w:tblW w:w="15398" w:type="dxa"/><w:tblBorders>'+bord+'</w:tblBorders><w:tblLayout w:type="fixed"/>'+
+    '<w:tblCellMar><w:top w:w="40" w:type="dxa"/><w:left w:w="80" w:type="dxa"/><w:bottom w:w="40" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tblCellMar></w:tblPr>'+
+    '<w:tblGrid>'+largeurs.map(w=>'<w:gridCol w:w="'+w+'"/>').join('')+'</w:tblGrid>';
+  tbl += '<w:tr><w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>'+colonnes.map((c,i)=>wCellule(c, largeurs[i], true)).join('')+'</w:tr>';
+  if(!lignes.length){
+    tbl += '<w:tr><w:tc><w:tcPr><w:tcW w:w="15398" w:type="dxa"/><w:gridSpan w:val="9"/></w:tcPr>'+wParagraphe('Aucune absence ni retard sur cette période.', {taille:19, apres:0, centre:true})+'</w:tc></w:tr>';
+  }
+  lignes.forEach(l=>{
+    tbl += '<w:tr><w:trPr><w:cantSplit/></w:trPr>'+l.map((v,i)=>wCellule(v, largeurs[i], false, i===5||i===6)).join('')+'</w:tr>';
+  });
+  tbl += '</w:tbl>';
+  corps += tbl;
+  if(bilan) corps += wParagraphe(bilan, {gras:true, taille:20, avant:160});
+  const sect = '<w:sectPr><w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="400" w:footer="400" w:gutter="0"/></w:sectPr>';
+  const documentXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>'+corps+sect+'</w:body></w:document>';
+  const contentTypes = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
+    '<Default Extension="xml" ContentType="application/xml"/>'+
+    '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>';
+  const rels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>';
+  return creerZip([
+    {nom:'[Content_Types].xml', contenu:contentTypes},
+    {nom:'_rels/.rels', contenu:rels},
+    {nom:'word/document.xml', contenu:documentXml}
+  ], 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+}
+function exporterWord(){
+  const f = relevesFiltres();
+  const lignes = lignesDetail(f.releves);
+  const titre = (DATA.meta.etablissement ? DATA.meta.etablissement+' — ' : '') + 'Détail des absences et retards des enseignants';
+  const sous = ['Période : du '+fmtDateCourte(f.debut)+' au '+fmtDateCourte(f.fin)];
+  const filtres = [
+    ['Cycle', libelleFiltre('filtreCycle')], ['Classe', libelleFiltre('filtreClasse')],
+    ['Enseignant', libelleFiltre('filtreEns')], ['CAE', libelleFiltre('filtreCAE')]
+  ].filter(x=>x[1]).map(x=>x[0]+' : '+x[1]);
+  if(filtres.length) sous.push('Filtres : '+filtres.join(' | '));
+  const nbA = f.releves.filter(r=>r.statut==='A').length;
+  const nbR = f.releves.filter(r=>r.statut==='R').length;
+  const totalMin = lignes.reduce((t,l)=> t + (parseInt(l[6])||0), 0);
+  const bilan = 'Total : '+nbA+' absence(s), '+nbR+' retard(s), '+totalMin+' minute(s) de retard cumulée(s).';
+  const blob = construireDocx(titre, sous, COLONNES_DETAIL, lignes, bilan);
+  telecharger(blob, 'suivi-assiduite-'+f.debut+'-au-'+f.fin+'.docx');
 }
 
 /* ---------- Démarrage ---------- */
