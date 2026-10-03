@@ -711,15 +711,19 @@ function vueSuivi(){
   if(filtreEns) relevesRecap = relevesRecap.filter(r=>r.enseignantId===filtreEns);
   if(filtreCAE) relevesRecap = relevesRecap.filter(r=>r.caeId===filtreCAE);
 
-  const statsParEns = {}; // ensId -> {parClasse:{classeId:{presences,absences,retards}}, presences,absences,retards}
+  // Par enseignant : total absences, total retards, total minutes de retard
+  const statsParEns = {};
   relevesRecap.forEach(r=>{
-    if(!statsParEns[r.enseignantId]) statsParEns[r.enseignantId] = {parClasse:{}, presences:0, absences:0, retards:0};
+    if(r.statut!=='A' && r.statut!=='R') return;
+    if(!statsParEns[r.enseignantId]) statsParEns[r.enseignantId] = {absences:0, retards:0, minutes:0};
     const s = statsParEns[r.enseignantId];
-    if(!s.parClasse[r.classeId]) s.parClasse[r.classeId] = {presences:0, absences:0, retards:0};
-    const sc = s.parClasse[r.classeId];
-    if(r.statut==='P'){ s.presences++; sc.presences++; }
-    else if(r.statut==='A'){ s.absences++; sc.absences++; }
-    else if(r.statut==='R'){ s.retards++; sc.retards++; }
+    if(r.statut==='A') s.absences++;
+    else{
+      s.retards++;
+      const cr = DATA.emploiDuTemps.find(c=>c.id===r.creneauId);
+      const m = cr ? calculerRetardMin(cr.heureDebut, r.heureArrivee) : null;
+      s.minutes += (m==null ? 0 : m);
+    }
   });
 
   const nomCycleFiltre = filtreCycle ? (cyclesTous.find(cy=>cy.id===filtreCycle)||{}).nom : 'tous cycles confondus';
@@ -729,28 +733,18 @@ function vueSuivi(){
     return (ea?ea.nom:'').localeCompare(eb?eb.nom:'');
   });
   if(!ensIds.length){
-    html += `<p class="note">Aucun relevé sur cette période.</p></div>`;
+    html += `<p class="note">Aucune absence ni aucun retard sur cette période.</p></div>`;
   }else{
-    html += `<table><thead><tr><th>Enseignant</th><th>Classe</th><th>Présences</th><th>Absences</th><th>Retards</th><th>Total A+R</th></tr></thead><tbody>`;
+    let tA=0, tR=0, tM=0;
+    html += `<table><thead><tr><th>Enseignant</th><th>Total absences</th><th>Total retards</th><th>Total minutes de retard</th></tr></thead><tbody>`;
     ensIds.forEach(ensId=>{
       const ens = DATA.enseignants.find(e=>e.id===ensId);
       const s = statsParEns[ensId];
-      const totalGeneral = s.absences+s.retards;
-      const alerteGenerale = totalGeneral >= (DATA.meta.seuilAlerte||3);
-      const classeIds = Object.keys(s.parClasse).sort((a,b)=>{
-        const ca = DATA.classes.find(c=>c.id===a), cb = DATA.classes.find(c=>c.id===b);
-        return (ca?ca.nom:'').localeCompare(cb?cb.nom:'');
-      });
-      html += `<tr class="${alerteGenerale?'surbrillance':''}" style="font-weight:600;background:#f4f7fc;">
-        <td>${ens?echap(ens.nom):'—'}</td><td><em>${filtreCycle?'Ce cycle':'Toutes classes'} (${classeIds.length})</em></td>
-        <td>${s.presences}</td><td>${s.absences}</td><td>${s.retards}</td><td>${totalGeneral}</td></tr>`;
-      classeIds.forEach(clId=>{
-        const cl = DATA.classes.find(c=>c.id===clId);
-        const sc = s.parClasse[clId];
-        const totalClasse = sc.absences+sc.retards;
-        html += `<tr><td></td><td>${cl?echap(cl.nom):'—'}</td><td>${sc.presences}</td><td>${sc.absences}</td><td>${sc.retards}</td><td>${totalClasse}</td></tr>`;
-      });
+      tA += s.absences; tR += s.retards; tM += s.minutes;
+      const alerte = (s.absences+s.retards) >= (DATA.meta.seuilAlerte||3);
+      html += `<tr class="${alerte?'surbrillance':''}"><td>${ens?echap(ens.nom):'—'}</td><td>${s.absences}</td><td>${s.retards}</td><td>${s.minutes} min</td></tr>`;
     });
+    html += `<tr style="font-weight:700;background:#f4f7fc;"><td>Total général</td><td>${tA}</td><td>${tR}</td><td>${tM} min</td></tr>`;
     html += `</tbody></table></div>`;
   }
 
