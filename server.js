@@ -18,7 +18,7 @@ if (!MONGODB_URI) {
 }
 
 const app = express();
-app.use(express.json({ limit: '5mb' }));
+app.use(express.json({ limit: '25mb' }));
 app.use((req, res, next) => {
   console.log(new Date().toISOString(), req.method, req.path);
   next();
@@ -26,11 +26,13 @@ app.use((req, res, next) => {
 app.use(express.static(path.join(__dirname, 'public')));
 
 let collection;
+let baseDonnees;
 
 async function demarrerMongo() {
   const client = new MongoClient(MONGODB_URI);
   await client.connect();
   const db = client.db('suivi_assiduite');
+  baseDonnees = db;
   collection = db.collection('documents');
   console.log('Connecté à MongoDB.');
 }
@@ -121,16 +123,58 @@ app.get('/api/data', verifierCode, async (req, res) => {
   }
 });
 
+/* ---------- Synchronisation sans perte ----------
+   Problème d'origine : deux enregistrements simultanés lisaient le même état, puis le dernier
+   à écrire écrasait les collections entières de l'autre (emplois du temps effacés).
+   Solution : verrou optimiste (champ "version"). Si quelqu'un a écrit entre-temps, on relit,
+   on refusionne et on réessaie, donc aucune modification n'est perdue. */
+let derniereSauvegardeHistorique = 0;
+async function archiverSiBesoin(doc) {
+  // Copie de sécurité au plus toutes les 10 minutes, on garde les 50 dernières.
+  if (!doc || Date.now() - derniereSauvegardeHistorique < 10 * 60 * 1000) return;
+  derniereSauvegardeHistorique = Date.now();
+  try {
+    const { _id, ...contenu } = doc;
+    const histo = baseDonnees.collection('historique');
+    await histo.insertOne({ date: new Date(), contenu });
+    const anciens = await histo.find({}, { projection: { _id: 1 } }).sort({ date: -1 }).skip(50).toArray();
+    if (anciens.length) await histo.deleteMany({ _id: { $in: anciens.map(x => x._id) } });
+  } catch (e) { console.warn('Archivage impossible', e.message); }
+}
+
+async function synchroniser(envoye) {
+  for (let essai = 0; essai < 10; essai++) {
+    const doc = await collection.findOne({ _id: 'suivi' });
+    const stocke = doc ? (({ _id, version, ...d }) => d)(doc) : donneesVides();
+    let fusionne = fusionnerDonnees(stocke, envoye);
+    fusionne = preserverHashs(fusionne, stocke);
+    fusionne.meta.updatedAt = new Date().toISOString();
+
+    if (!doc) {
+      try {
+        await collection.insertOne({ _id: 'suivi', ...fusionne, version: 1 });
+        return fusionne;
+      } catch (e) {
+        if (e.code === 11000) continue; // quelqu'un l'a créé juste avant : on recommence
+        throw e;
+      }
+    }
+    await archiverSiBesoin(doc);
+    const filtre = doc.version === undefined
+      ? { _id: 'suivi', version: { $exists: false } }
+      : { _id: 'suivi', version: doc.version };
+    const r = await collection.updateOne(filtre, { $set: { ...fusionne, version: (doc.version || 0) + 1 } });
+    if (r.matchedCount === 1) return fusionne;
+    // sinon : conflit, on relit et on refusionne
+  }
+  throw new Error('Trop de conflits simultanés');
+}
+
 app.post('/api/sync', verifierCode, async (req, res) => {
   try {
     const envoye = req.body && req.body.data;
     if (!envoye) return res.status(400).json({ erreur: 'Données manquantes.' });
-    let doc = await collection.findOne({ _id: 'suivi' });
-    const stocke = doc ? (({ _id, ...d }) => d)(doc) : donneesVides();
-    let fusionne = fusionnerDonnees(stocke, envoye);
-    fusionne = preserverHashs(fusionne, stocke);
-    fusionne.meta.updatedAt = new Date().toISOString();
-    await collection.updateOne({ _id: 'suivi' }, { $set: fusionne }, { upsert: true });
+    const fusionne = await synchroniser(envoye);
     res.json(masquerMotsDePasse(fusionne));
   } catch (e) {
     console.error(e);
@@ -144,14 +188,13 @@ app.post('/api/cpe/mot-de-passe', verifierCode, async (req, res) => {
     if (!cpeId || !motDePasse || motDePasse.length < 4) {
       return res.status(400).json({ erreur: 'Mot de passe invalide (4 caractères minimum).' });
     }
-    let doc = await collection.findOne({ _id: 'suivi' });
-    if (!doc) return res.status(404).json({ erreur: 'Aucune donnée.' });
-    const idx = (doc.cpes || []).findIndex(c => c.id === cpeId);
-    if (idx === -1) return res.status(404).json({ erreur: 'CPE introuvable.' });
     const hash = bcrypt.hashSync(motDePasse, 10);
-    doc.cpes[idx].motDePasseHash = hash;
-    doc.cpes[idx].updatedAt = new Date().toISOString();
-    await collection.updateOne({ _id: 'suivi' }, { $set: { cpes: doc.cpes, 'meta.updatedAt': new Date().toISOString() } });
+    const maintenant = new Date().toISOString();
+    const r = await collection.updateOne(
+      { _id: 'suivi', 'cpes.id': cpeId },
+      { $set: { 'cpes.$.motDePasseHash': hash, 'cpes.$.updatedAt': maintenant, 'meta.updatedAt': maintenant }, $inc: { version: 1 } }
+    );
+    if (r.matchedCount === 0) return res.status(404).json({ erreur: 'CPE introuvable.' });
     res.json({ ok: true });
   } catch (e) {
     console.error(e);
