@@ -221,21 +221,54 @@ async function chargerDepuisServeur(){
     majBarreStatut();
   }
 }
-async function envoyerVersServeur(){
+/* ---------- Boucle d'enregistrement (aucune saisie perdue) ----------
+   - chaque saisie est d'abord gardée sur l'appareil, puis envoyée au serveur ;
+   - un seul envoi à la fois (file d'attente), les modifications faites pendant un envoi
+     partent dans le tour de boucle suivant ;
+   - si l'envoi échoue, on réessaie automatiquement toutes les 5 secondes ;
+   - si la page est fermée avant l'envoi, la reprise se fait au prochain démarrage ;
+   - la réponse du serveur est FUSIONNÉE avec les données locales, jamais substituée. */
+let sauvegardeEnAttente = false;
+let sauvegardeEnCours = false;
+const CLE_EN_ATTENTE = 'suivi_assiduite_en_attente';
+
+async function viderFileSauvegarde(){
+  if(sauvegardeEnCours) return;
+  sauvegardeEnCours = true;
   try{
-    const fusionne = await appelApi('/api/sync', {method:'POST', body: JSON.stringify({data: DATA})});
-    DATA = fusionne;
-    connecteServeur = true;
-    derniereSynchro = new Date();
-  }catch(e){
-    connecteServeur = false;
-    console.warn('Synchronisation impossible, les données restent en local pour le moment', e);
+    while(sauvegardeEnAttente){
+      sauvegardeEnAttente = false;
+      const instantane = JSON.stringify(DATA);
+      try{
+        const rep = await appelApi('/api/sync', {method:'POST', body: '{"data":'+instantane+'}'});
+        DATA = fusionnerDonnees(DATA, rep);
+        connecteServeur = true;
+        derniereSynchro = new Date();
+      }catch(e){
+        sauvegardeEnAttente = true;   // on garde la modification à envoyer
+        connecteServeur = false;
+        console.warn('Enregistrement impossible, nouvelle tentative automatique', e);
+        break;
+      }
+    }
+  } finally {
+    sauvegardeEnCours = false;
   }
+  try{
+    if(sauvegardeEnAttente) localStorage.setItem(CLE_EN_ATTENTE, '1');
+    else localStorage.removeItem(CLE_EN_ATTENTE);
+    localStorage.setItem('suivi_assiduite_secours', JSON.stringify(DATA));
+  }catch(e){}
   majBarreStatut();
+}
+function demarrerBoucleEnregistrement(){
+  setInterval(()=>{ if(sauvegardeEnAttente && !sauvegardeEnCours) viderFileSauvegarde(); }, 5000);
+  window.addEventListener('online', ()=>{ if(sauvegardeEnAttente) viderFileSauvegarde(); });
 }
 function demarrerPolling(){
   setInterval(async ()=>{
-    if(synchroEnCours) return;
+    // on ne recharge jamais le serveur tant que des modifications locales ne sont pas parties
+    if(synchroEnCours || sauvegardeEnAttente || sauvegardeEnCours) return;
     synchroEnCours = true;
     try{ await chargerDepuisServeur(); }
     finally{ synchroEnCours = false; }
@@ -243,8 +276,12 @@ function demarrerPolling(){
 }
 async function persister(){
   DATA.meta.updatedAt = maintenant();
-  try{ localStorage.setItem('suivi_assiduite_secours', JSON.stringify(DATA)); }catch(e){}
-  await envoyerVersServeur();
+  sauvegardeEnAttente = true;
+  try{
+    localStorage.setItem('suivi_assiduite_secours', JSON.stringify(DATA));
+    localStorage.setItem(CLE_EN_ATTENTE, '1');
+  }catch(e){}
+  await viderFileSauvegarde();
 }
 
 /* ---------- Barre de statut ---------- */
@@ -252,7 +289,9 @@ function majBarreStatut(){
   const bp = document.getElementById('badgeProfil');
   bp.textContent = PROFIL ? (PROFIL.role+' — '+PROFIL.nom) : 'Aucun profil sélectionné';
   const bs = document.getElementById('badgeSync');
-  if(connecteServeur){
+  if(sauvegardeEnAttente || sauvegardeEnCours){
+    bs.textContent = connecteServeur || sauvegardeEnCours ? 'Enregistrement...' : 'Hors ligne — enregistrement en attente (réessai automatique)';
+  }else if(connecteServeur){
     const h = derniereSynchro || new Date();
     bs.textContent = 'Connecté — synchro '+String(h.getHours()).padStart(2,'0')+':'+String(h.getMinutes()).padStart(2,'0');
   }else{
@@ -1252,9 +1291,12 @@ async function demarrer(){
   }catch(e){}
   // code d'accès mémorisé sur cet appareil (formulaire visible sur l'accueil s'il manque ou est invalide)
   codeAcces = chargerCodeEnregistre();
+  try{ if(localStorage.getItem(CLE_EN_ATTENTE)==='1') sauvegardeEnAttente = true; }catch(e){}
   render();
+  if(sauvegardeEnAttente) await viderFileSauvegarde();   // d'abord envoyer ce qui n'était pas parti
   await chargerDepuisServeur();
   render();
+  demarrerBoucleEnregistrement();
   demarrerPolling();
 }
 
