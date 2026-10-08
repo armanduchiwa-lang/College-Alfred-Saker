@@ -221,54 +221,21 @@ async function chargerDepuisServeur(){
     majBarreStatut();
   }
 }
-/* ---------- Boucle d'enregistrement (aucune saisie perdue) ----------
-   - chaque saisie est d'abord gardée sur l'appareil, puis envoyée au serveur ;
-   - un seul envoi à la fois (file d'attente), les modifications faites pendant un envoi
-     partent dans le tour de boucle suivant ;
-   - si l'envoi échoue, on réessaie automatiquement toutes les 5 secondes ;
-   - si la page est fermée avant l'envoi, la reprise se fait au prochain démarrage ;
-   - la réponse du serveur est FUSIONNÉE avec les données locales, jamais substituée. */
-let sauvegardeEnAttente = false;
-let sauvegardeEnCours = false;
-const CLE_EN_ATTENTE = 'suivi_assiduite_en_attente';
-
-async function viderFileSauvegarde(){
-  if(sauvegardeEnCours) return;
-  sauvegardeEnCours = true;
+async function envoyerVersServeur(){
   try{
-    while(sauvegardeEnAttente){
-      sauvegardeEnAttente = false;
-      const instantane = JSON.stringify(DATA);
-      try{
-        const rep = await appelApi('/api/sync', {method:'POST', body: '{"data":'+instantane+'}'});
-        DATA = fusionnerDonnees(DATA, rep);
-        connecteServeur = true;
-        derniereSynchro = new Date();
-      }catch(e){
-        sauvegardeEnAttente = true;   // on garde la modification à envoyer
-        connecteServeur = false;
-        console.warn('Enregistrement impossible, nouvelle tentative automatique', e);
-        break;
-      }
-    }
-  } finally {
-    sauvegardeEnCours = false;
+    const fusionne = await appelApi('/api/sync', {method:'POST', body: JSON.stringify({data: DATA})});
+    DATA = fusionne;
+    connecteServeur = true;
+    derniereSynchro = new Date();
+  }catch(e){
+    connecteServeur = false;
+    console.warn('Synchronisation impossible, les données restent en local pour le moment', e);
   }
-  try{
-    if(sauvegardeEnAttente) localStorage.setItem(CLE_EN_ATTENTE, '1');
-    else localStorage.removeItem(CLE_EN_ATTENTE);
-    localStorage.setItem('suivi_assiduite_secours', JSON.stringify(DATA));
-  }catch(e){}
   majBarreStatut();
-}
-function demarrerBoucleEnregistrement(){
-  setInterval(()=>{ if(sauvegardeEnAttente && !sauvegardeEnCours) viderFileSauvegarde(); }, 5000);
-  window.addEventListener('online', ()=>{ if(sauvegardeEnAttente) viderFileSauvegarde(); });
 }
 function demarrerPolling(){
   setInterval(async ()=>{
-    // on ne recharge jamais le serveur tant que des modifications locales ne sont pas parties
-    if(synchroEnCours || sauvegardeEnAttente || sauvegardeEnCours) return;
+    if(synchroEnCours) return;
     synchroEnCours = true;
     try{ await chargerDepuisServeur(); }
     finally{ synchroEnCours = false; }
@@ -276,12 +243,8 @@ function demarrerPolling(){
 }
 async function persister(){
   DATA.meta.updatedAt = maintenant();
-  sauvegardeEnAttente = true;
-  try{
-    localStorage.setItem('suivi_assiduite_secours', JSON.stringify(DATA));
-    localStorage.setItem(CLE_EN_ATTENTE, '1');
-  }catch(e){}
-  await viderFileSauvegarde();
+  try{ localStorage.setItem('suivi_assiduite_secours', JSON.stringify(DATA)); }catch(e){}
+  await envoyerVersServeur();
 }
 
 /* ---------- Barre de statut ---------- */
@@ -289,9 +252,7 @@ function majBarreStatut(){
   const bp = document.getElementById('badgeProfil');
   bp.textContent = PROFIL ? (PROFIL.role+' — '+PROFIL.nom) : 'Aucun profil sélectionné';
   const bs = document.getElementById('badgeSync');
-  if(sauvegardeEnAttente || sauvegardeEnCours){
-    bs.textContent = connecteServeur || sauvegardeEnCours ? 'Enregistrement...' : 'Hors ligne — enregistrement en attente (réessai automatique)';
-  }else if(connecteServeur){
+  if(connecteServeur){
     const h = derniereSynchro || new Date();
     bs.textContent = 'Connecté — synchro '+String(h.getHours()).padStart(2,'0')+':'+String(h.getMinutes()).padStart(2,'0');
   }else{
@@ -306,7 +267,8 @@ const ONGLETS = [
   {id:'accueil', label:'Accueil'},
   {id:'config', label:'Configuration (CPE)'},
   {id:'saisie', label:'Saisie (CAE)'},
-  {id:'suivi', label:'Suivi (CPE)'}
+  {id:'suivi', label:'Suivi (CPE)'},
+  {id:'correction', label:'Correction (CPE)'}
 ];
 function construireNav(){
   const nav = document.getElementById('navPrincipale');
@@ -325,6 +287,7 @@ function render(){
   else if(ONGLET==='config') c.innerHTML = vueConfig();
   else if(ONGLET==='saisie') c.innerHTML = vueSaisie();
   else if(ONGLET==='suivi') c.innerHTML = vueSuivi();
+  else if(ONGLET==='correction') c.innerHTML = vueCorrection();
   attacherEvenements();
 }
 
@@ -660,7 +623,19 @@ function vueSaisie(){
     return html;
   }
 
-  mesClasses.forEach(cl=>{
+  html += htmlBlocsReleves(mesClasses, date, jour);
+  return html;
+}
+
+/* Tableaux de relevé (présent / retard / absent) d'une liste de classes pour une date donnée.
+   Partagé par la saisie CAE et la correction CPE. */
+function nomCPE(id){ const p = DATA.cpes.find(x=>x.id===id); return p ? p.nom : 'un CPE'; }
+function marquerCorrection(r){
+  if(PROFIL && PROFIL.role==='CPE'){ r.corrigePar = PROFIL.id; r.corrigeLe = maintenant(); }
+}
+function htmlBlocsReleves(classes, date, jour){
+  let html = '';
+  classes.forEach(cl=>{
     const creneaux = DATA.emploiDuTemps.filter(l=>!l.deleted && l.classeId===cl.id && l.jour===jour)
       .sort((a,b)=>a.heureDebut.localeCompare(b.heureDebut) || (a.rang||0)-(b.rang||0));
     html += `<div class="carte"><h2>${echap(cl.nom)}</h2>`;
@@ -687,6 +662,7 @@ function vueSaisie(){
           <button class="sel-A ${statut==='A'?'actif':''}" data-statut="A">Absent</button>
         </div></td>
         <td>
+          ${releve&&releve.corrigePar?`<div class="petit-texte" style="margin-bottom:6px;">✎ Corrigé par ${echap(nomCPE(releve.corrigePar))}${releve.corrigeLe?' le '+fmtDate(releve.corrigeLe.slice(0,10)):''}</div>`:''}
           <div class="zoneRetard ${statut==='R'?'':'cache'}" style="margin-bottom:6px;">
             <label>Heure d'arrivée de l'enseignant (cours à ${cr.heureDebut})</label>
             <input type="time" class="champHeureArrivee" data-creneau="${cr.id}" data-date="${date}" data-debut="${cr.heureDebut}" value="${releve&&releve.heureArrivee?releve.heureArrivee:''}">
@@ -698,6 +674,38 @@ function vueSaisie(){
     });
     html += `</tbody></table></div>`;
   });
+  return html;
+}
+
+/* ---------- Vue Correction (CPE) : modifier un relevé CAE, à n'importe quelle date ---------- */
+function vueCorrection(){
+  if(!PROFIL || PROFIL.role!=='CPE'){
+    return `<div class="info">Sélectionnez d'abord votre profil <strong>CPE</strong> depuis l'onglet Accueil.</div>`;
+  }
+  const champ = document.getElementById('champDateSaisie');
+  const date = (champ && champ.value) ? champ.value : todayStr();
+  const jour = jourDeDate(date);
+  const cycles = DATA.cycles.filter(x=>!x.deleted);
+  const toutes = DATA.classes.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
+  const selActuel = document.getElementById('selClasseCorrection');
+  let choix;
+  if(selActuel) choix = selActuel.value;
+  else {
+    const monCycle = cycles.find(cy=>cy.cpeId===PROFIL.id);
+    const premiere = toutes.find(c=>monCycle && c.cycleId===monCycle.id) || toutes[0];
+    choix = premiere ? premiere.id : '';
+  }
+  let html = `<div class="carte"><h2>Correction des relevés</h2>
+    <p class="petit-texte">Vous pouvez modifier le statut (présent, retard, absent), l'heure d'arrivée et le commentaire saisis par les CAE, y compris plusieurs jours après. Les relevés modifiés sont signalés « Corrigé par ».</p>
+    <div class="ligne">
+      <div><label>Date du relevé</label><input type="date" id="champDateSaisie" value="${date}"></div>
+      <div><label>Classe</label><select id="selClasseCorrection"><option value="">Toutes les classes</option>${toutes.map(c=>`<option value="${c.id}" ${choix===c.id?'selected':''}>${echap(c.nom)}</option>`).join('')}</select></div>
+      <div class="petit-texte" style="align-self:flex-end;">Jour : <strong>${jour}</strong></div>
+    </div></div>`;
+  if(!toutes.length){ return html + `<div class="alerte">Aucune classe configurée.</div>`; }
+  if(jour==='Dimanche'){ return html + `<div class="info">Pas de cours le dimanche.</div>`; }
+  const classes = choix ? toutes.filter(c=>c.id===choix) : toutes;
+  html += htmlBlocsReleves(classes, date, jour);
   return html;
 }
 
@@ -806,6 +814,8 @@ function lignesDetail(releves){
     const classe = DATA.classes.find(c=>c.id===r.classeId);
     const ens = DATA.enseignants.find(e=>e.id===r.enseignantId);
     const cae = DATA.caes.find(p=>p.id===r.caeId);
+    const cpeCorr = r.corrigePar ? DATA.cpes.find(p=>p.id===r.corrigePar) : null;
+    const auteur = cae ? (cae.nom + (cpeCorr ? ' (corrigé par '+cpeCorr.nom+')' : '')) : (cpeCorr ? cpeCorr.nom+' (CPE)' : '—');
     const grp = creneau ? libelleGroupe(creneau) : '';
     const nomClasse = (classe?classe.nom:'—') + (grp ? ' ('+grp+')' : '');
     const min = minutesRetardReleve(r, creneau);
@@ -819,7 +829,7 @@ function lignesDetail(releves){
       r.statut==='R' ? 'Retard' : 'Absent',
       min===''? '' : String(min),
       r.commentaire || '',
-      cae ? cae.nom : '—'
+      auteur
     ];
   });
 }
@@ -1073,6 +1083,8 @@ function attacherEvenements(){
   // Saisie CAE
   const champDate = document.getElementById('champDateSaisie');
   if(champDate) champDate.addEventListener('change', render);
+  const selClasseCorr = document.getElementById('selClasseCorrection');
+  if(selClasseCorr) selClasseCorr.addEventListener('change', render);
 
   document.querySelectorAll('.statut-boutons button').forEach(btn=>{
     btn.addEventListener('click', async ()=>{
@@ -1081,10 +1093,11 @@ function attacherEvenements(){
       const cr = DATA.emploiDuTemps.find(c=>c.id===creneauId);
       const releveId = creneauId+'__'+date;
       let r = DATA.releves.find(x=>x.id===releveId);
-      if(!r){ r = {id:releveId, date, creneauId, classeId:cr.classeId, enseignantId:cr.enseignantId, statut:'', heureArrivee:'', commentaire:'', caeId:PROFIL.id, deleted:false}; DATA.releves.push(r); }
+      if(!r){ r = {id:releveId, date, creneauId, classeId:cr.classeId, enseignantId:cr.enseignantId, statut:'', heureArrivee:'', commentaire:'', caeId:(PROFIL.role==='CAE'?PROFIL.id:''), deleted:false}; DATA.releves.push(r); }
       r.statut = btn.dataset.statut;
       if(r.statut!=='R'){ r.heureArrivee = ''; r.minutesRetard = ''; }
-      r.caeId = PROFIL.id;
+      if(PROFIL.role==='CPE') marquerCorrection(r);
+      else { r.caeId = PROFIL.id; r.corrigePar = ''; r.corrigeLe = ''; }
       r.updatedAt = maintenant();
       r.deleted = false;
       await persister(); render();
@@ -1100,6 +1113,7 @@ function attacherEvenements(){
         r.heureArrivee = inp.value;
         const m = calculerRetardMin(inp.dataset.debut, inp.value);
         r.minutesRetard = (m==null) ? '' : m;
+        marquerCorrection(r);
         r.updatedAt = maintenant();
         await persister();
       }
@@ -1110,8 +1124,8 @@ function attacherEvenements(){
       const releveId = inp.dataset.creneau+'__'+inp.dataset.date;
       const cr = DATA.emploiDuTemps.find(c=>c.id===inp.dataset.creneau);
       let r = DATA.releves.find(x=>x.id===releveId);
-      if(!r){ r = {id:releveId, date:inp.dataset.date, creneauId:inp.dataset.creneau, classeId:cr.classeId, enseignantId:cr.enseignantId, statut:'', heureArrivee:'', commentaire:'', caeId:PROFIL.id, deleted:false}; DATA.releves.push(r); }
-      r.commentaire = inp.value; r.updatedAt = maintenant();
+      if(!r){ r = {id:releveId, date:inp.dataset.date, creneauId:inp.dataset.creneau, classeId:cr.classeId, enseignantId:cr.enseignantId, statut:'', heureArrivee:'', commentaire:'', caeId:(PROFIL.role==='CAE'?PROFIL.id:''), deleted:false}; DATA.releves.push(r); }
+      r.commentaire = inp.value; marquerCorrection(r); r.updatedAt = maintenant();
       await persister();
     });
   });
@@ -1291,12 +1305,9 @@ async function demarrer(){
   }catch(e){}
   // code d'accès mémorisé sur cet appareil (formulaire visible sur l'accueil s'il manque ou est invalide)
   codeAcces = chargerCodeEnregistre();
-  try{ if(localStorage.getItem(CLE_EN_ATTENTE)==='1') sauvegardeEnAttente = true; }catch(e){}
   render();
-  if(sauvegardeEnAttente) await viderFileSauvegarde();   // d'abord envoyer ce qui n'était pas parti
   await chargerDepuisServeur();
   render();
-  demarrerBoucleEnregistrement();
   demarrerPolling();
 }
 
