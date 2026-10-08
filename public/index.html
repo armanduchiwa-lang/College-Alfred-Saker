@@ -795,13 +795,26 @@ function vueSuivi(){
     html += `</tbody></table></div>`;
   }
 
+  const modifiable = !!(PROFIL && PROFIL.role==='CPE');
   html += `<div class="carte"><h2>Détail des absences et retards (${releves.length})</h2>
-    <div style="overflow-x:auto;"><table><thead><tr>${COLONNES_DETAIL.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>`;
-  lignesDetail(releves).forEach(l=>{
+    ${modifiable?`<p class="petit-texte">Avant l'export, vous pouvez corriger le statut, l'heure d'arrivée et le commentaire de chaque ligne, ou la supprimer (🗑). Passer une ligne en « Présent » la retire de la liste et des exports.</p>`:''}
+    <div style="overflow-x:auto;"><table><thead><tr>${COLONNES_DETAIL.map(c=>`<th>${c}</th>`).join('')}${modifiable?'<th>Corriger</th>':''}</tr></thead><tbody>`;
+  lignesDetail(releves).forEach((l,idx)=>{
+    const r = releves[idx];
     const tag = l[6]==='Retard' ? 'R' : 'A';
-    html += `<tr>`+l.map((v,i)=> i===6 ? `<td><span class="tag ${tag}">${echap(v)}</span></td>` : `<td>${echap(v)}</td>`).join('')+`</tr>`;
+    html += `<tr>`+l.map((v,i)=>{
+      if(modifiable && i===6) return `<td><select class="selStatutDetail" data-rid="${r.id}"><option value="A" ${r.statut==='A'?'selected':''}>Absent</option><option value="R" ${r.statut==='R'?'selected':''}>Retard</option><option value="P">Présent</option></select></td>`;
+      if(modifiable && i===8) return `<td><input type="text" class="champCommDetail" data-rid="${r.id}" value="${echap(v)}" style="min-width:140px;"></td>`;
+      if(i===6) return `<td><span class="tag ${tag}">${echap(v)}</span></td>`;
+      return `<td>${echap(v)}</td>`;
+    }).join('');
+    if(modifiable){
+      const cr = DATA.emploiDuTemps.find(c=>c.id===r.creneauId);
+      html += `<td style="white-space:nowrap;">${r.statut==='R'?`<input type="time" class="champHeureDetail" data-rid="${r.id}" value="${r.heureArrivee||''}" title="Heure d'arrivée (cours à ${cr?cr.heureDebut:'?'})"> `:''}<button class="btn danger petit btnSupprDetail" data-rid="${r.id}">🗑 Supprimer</button></td>`;
+    }
+    html += `</tr>`;
   });
-  if(!releves.length) html += `<tr><td colspan="10" class="note">Aucune absence ni retard sur cette période.</td></tr>`;
+  if(!releves.length) html += `<tr><td colspan="${modifiable?11:10}" class="note">Aucune absence ni retard sur cette période.</td></tr>`;
   html += `</tbody></table></div></div>`;
   return html;
 }
@@ -1130,6 +1143,45 @@ function attacherEvenements(){
     });
   });
 
+  // Suivi CPE : correction / suppression avant export
+  const relDetail = el => DATA.releves.find(x=>x.id===el.dataset.rid);
+  document.querySelectorAll('.selStatutDetail').forEach(sel=>{
+    sel.addEventListener('change', async ()=>{
+      const r = relDetail(sel); if(!r) return;
+      r.statut = sel.value;
+      if(r.statut!=='R'){ r.heureArrivee = ''; r.minutesRetard = ''; }
+      marquerCorrection(r); r.updatedAt = maintenant();
+      await persister(); render();
+    });
+  });
+  document.querySelectorAll('.champHeureDetail').forEach(inp=>{
+    inp.addEventListener('change', async ()=>{
+      const r = relDetail(inp); if(!r) return;
+      const cr = DATA.emploiDuTemps.find(c=>c.id===r.creneauId);
+      r.heureArrivee = inp.value;
+      const m = cr ? calculerRetardMin(cr.heureDebut, inp.value) : null;
+      r.minutesRetard = (m==null) ? '' : m;
+      marquerCorrection(r); r.updatedAt = maintenant();
+      await persister(); render();
+    });
+  });
+  document.querySelectorAll('.champCommDetail').forEach(inp=>{
+    inp.addEventListener('change', async ()=>{
+      const r = relDetail(inp); if(!r) return;
+      r.commentaire = inp.value.trim();
+      marquerCorrection(r); r.updatedAt = maintenant();
+      await persister();
+    });
+  });
+  document.querySelectorAll('.btnSupprDetail').forEach(b=>{
+    b.addEventListener('click', async ()=>{
+      const r = relDetail(b); if(!r) return;
+      if(!confirm('Supprimer cette ligne ? Elle ne sera plus comptée ni exportée.')) return;
+      r.deleted = true;
+      marquerCorrection(r); r.updatedAt = maintenant();
+      await persister(); render();
+    });
+  });
   // Suivi CPE
   const btnFiltres = document.getElementById('btnAppliquerFiltres');
   if(btnFiltres) btnFiltres.addEventListener('click', render);
