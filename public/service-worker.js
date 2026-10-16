@@ -1,4 +1,4 @@
-const CACHE = 'suivi-assiduite-v1';
+const CACHE = 'suivi-assiduite-v2';
 const FICHIERS_STATIQUES = ['/', '/manifest.json', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (evt) => {
@@ -16,6 +16,8 @@ self.addEventListener('activate', (evt) => {
 });
 
 self.addEventListener('fetch', (evt) => {
+  // Seules les requêtes GET sont gérées (jamais les envois de données)
+  if (evt.request.method !== 'GET') return;
   const url = new URL(evt.request.url);
   // Les données passent toujours par le réseau (jamais de cache pour /api/)
   if (url.pathname.startsWith('/api/')) return;
