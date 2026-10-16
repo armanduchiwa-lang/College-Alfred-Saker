@@ -1346,8 +1346,9 @@ function creerZip(fichiers, mime){
     ...u32(tailleCentral), ...u32(offset), ...u16(0)]));
   return new Blob(parts, {type:mime});
 }
-const ENTETE_COLLEGE_B64 = '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';
-const ENTETE_COLLEGE_DIM = {w:960, h:94};
+/* Option de secours : collez ici le base64 de votre image d'entête (sinon placez le fichier public/entete.png) */
+const ENTETE_COLLEGE_B64 = '';
+let ENTETE_COLLEGE_DIM = {w:960, h:94};
 function xmlEchap(t){
   return String(t==null?'':t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g,'');
@@ -1420,7 +1421,23 @@ function construireDocx(titre, sousTitres, colonnes, lignes, bilan, entete){
   if(entete) fichiers.push({nom:'word/media/entete.png', contenu:entete});
   return creerZip(fichiers, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
 }
-function exporterWord(){
+/* Entête du collège : d'abord le fichier /entete.png (dossier public/), sinon la constante base64 */
+async function chargerEntete(){
+  let buf = null;
+  try{
+    const rep = await fetch('/entete.png', {cache:'no-cache'});
+    if(rep.ok) buf = new Uint8Array(await rep.arrayBuffer());
+  }catch(e){}
+  if(!buf && ENTETE_COLLEGE_B64){
+    try{ buf = Uint8Array.from(atob(ENTETE_COLLEGE_B64), c=>c.charCodeAt(0)); }catch(e){ buf = null; }
+  }
+  // doit être un vrai PNG (signature 89 50 4E 47), sinon on n'insère rien plutôt qu'une image cassée
+  if(!buf || buf.length<24 || buf[0]!==0x89 || buf[1]!==0x50 || buf[2]!==0x4E || buf[3]!==0x47) return null;
+  const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  ENTETE_COLLEGE_DIM = {w: dv.getUint32(16), h: dv.getUint32(20)};
+  return buf;
+}
+async function exporterWord(){
   const f = relevesFiltres();
   const lignes = lignesDetail(f.releves);
   const titre = 'Détail des absences et retards des enseignants';
@@ -1434,8 +1451,7 @@ function exporterWord(){
   const nbR = f.releves.filter(r=>r.statut==='R').length;
   const totalMin = lignes.reduce((t,l)=> t + (parseInt(l[7])||0), 0);
   const bilan = 'Total : '+nbA+' absence(s), '+nbR+' retard(s), '+totalMin+' minute(s) de retard cumulée(s).';
-  let entete = null;
-  try{ entete = Uint8Array.from(atob(ENTETE_COLLEGE_B64), c=>c.charCodeAt(0)); }catch(e){ entete = null; }
+  const entete = await chargerEntete();
   const blob = construireDocx(titre, sous, COLONNES_DETAIL, lignes, bilan, entete);
   telecharger(blob, 'suivi-assiduite-'+f.debut+'-au-'+f.fin+'.docx');
 }
