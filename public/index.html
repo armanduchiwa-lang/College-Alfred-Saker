@@ -547,6 +547,16 @@ function vueConfigEDT(){
     classes.map(c=>`<option value="${c.id}">${echap(c.nom)}</option>`).join('')+`</select></div>
     <div style="align-self:flex-end;"><button class="btn" id="btnEnregistrerEDT">💾 Enregistrer l'emploi du temps</button></div>
     <div id="statutEnregistrement" class="petit-texte" style="align-self:flex-end;max-width:420px;"></div></div>`;
+  const ensListe = DATA.enseignants.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
+  html += `<div class="ligne" style="background:#f8fafc;border:1px dashed var(--gris-bordure);border-radius:8px;padding:10px;">
+    <div><label>Exporter l'emploi du temps de…</label><select id="selPorteeEDT">
+      <option value="classe">La classe affichée ci-dessus</option>
+      <option value="classes">Toutes les classes (une page / feuille par classe)</option>
+      <option value="enstous">Tous les enseignants (une page / feuille par enseignant)</option>
+      ${ensListe.length?`<optgroup label="Un enseignant">`+ensListe.map(e=>`<option value="ens:${e.id}">${echap(e.nom)}</option>`).join('')+`</optgroup>`:''}
+    </select></div>
+    <div style="align-self:flex-end;"><button class="btn" id="btnEdtWord">📄 Export Word</button></div>
+    <div style="align-self:flex-end;"><button class="btn secondaire" id="btnEdtExcel">📊 Export Excel</button></div></div>`;
   html += `<div class="sous-onglets" id="ongletsJourEDT">`+JOURS_ECOLE.map(j=>`<button data-jour-edt="${j}" class="${JOUR_EDT_ACTIF===j?'actif':''}">${j}</button>`).join('')+`</div>`;
   html += `<div id="zoneEDT"></div></div>`;
   return html;
@@ -1118,6 +1128,10 @@ function attacherEvenements(){
       if(selClasseEDT) rendreZoneEDT(selClasseEDT.value);
     });
   });
+  const btnEdtWord = document.getElementById('btnEdtWord');
+  if(btnEdtWord) btnEdtWord.addEventListener('click', ()=> exporterEDT('word'));
+  const btnEdtExcel = document.getElementById('btnEdtExcel');
+  if(btnEdtExcel) btnEdtExcel.addEventListener('click', ()=> exporterEDT('excel'));
   // Bouton « Enregistrer l'emploi du temps »
   const btnEDT = document.getElementById('btnEnregistrerEDT');
   if(btnEDT){
@@ -1366,21 +1380,25 @@ function wCellule(texte, largeur, entete, centre){
     (entete?'<w:shd w:val="clear" w:color="auto" w:fill="1E3A5F"/>':'')+
     '<w:vAlign w:val="center"/></w:tcPr>'+wParagraphe(texte, opts)+'</w:tc>';
 }
+
+function xmlEntete(img, docId){
+  const w = img.dim.w, h = img.dim.h;
+  let cx = 15398*635, cy = Math.round(cx*h/w);
+  if(img.maxCy && cy > img.maxCy*635){ cy = img.maxCy*635; cx = Math.round(cy*w/h); }
+  return '<w:p><w:pPr><w:spacing w:before="0" w:after="160"/><w:jc w:val="center"/></w:pPr><w:r><w:drawing>'+
+    '<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="'+cx+'" cy="'+cy+'"/><wp:docPr id="'+docId+'" name="Entête du collège '+docId+'" descr="Entête du collège"/>'+
+    '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'+
+    '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="'+docId+'" name="entete.png"/><pic:cNvPicPr/></pic:nvPicPr>'+
+    '<pic:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>'+
+    '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="'+cx+'" cy="'+cy+'"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>'+
+    '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
+}
 function construireDocx(titre, sousTitres, colonnes, lignes, bilan, entete){
   // Page A4 paysage (largeur utile = 16838 - 2*720 = 15398 twips)
   const largeurs = [1200,1800,1100,1400,2200,1700,1100,1400,2298,1200];
   const bord = ['top','left','bottom','right','insideH','insideV'].map(b=>'<w:'+b+' w:val="single" w:sz="4" w:space="0" w:color="808080"/>').join('');
   let corps = '';
-  if(entete){
-    const cx = 15398*635, cy = Math.round(cx*ENTETE_COLLEGE_DIM.h/ENTETE_COLLEGE_DIM.w);
-    corps += '<w:p><w:pPr><w:spacing w:before="0" w:after="160"/><w:jc w:val="center"/></w:pPr><w:r><w:drawing>'+
-      '<wp:inline distT="0" distB="0" distL="0" distR="0"><wp:extent cx="'+cx+'" cy="'+cy+'"/><wp:docPr id="1" name="Entête du collège" descr="Entête du collège"/>'+
-      '<a:graphic xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/picture">'+
-      '<pic:pic xmlns:pic="http://schemas.openxmlformats.org/drawingml/2006/picture"><pic:nvPicPr><pic:cNvPr id="0" name="entete.png"/><pic:cNvPicPr/></pic:nvPicPr>'+
-      '<pic:blipFill><a:blip r:embed="rId1"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>'+
-      '<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="'+cx+'" cy="'+cy+'"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr></pic:pic>'+
-      '</a:graphicData></a:graphic></wp:inline></w:drawing></w:r></w:p>';
-  }
+  if(entete) corps += xmlEntete({dim:ENTETE_COLLEGE_DIM, maxCy:null}, 1);
   corps += wParagraphe(titre, {gras:true, taille:32, couleur:'1E3A5F', apres:80, centre:true});
   sousTitres.forEach(t=>{ corps += wParagraphe(t, {taille:21, apres:40, centre:true}); });
   corps += wParagraphe('', {apres:80});
@@ -1454,6 +1472,276 @@ async function exporterWord(){
   const entete = await chargerEntete();
   const blob = construireDocx(titre, sous, COLONNES_DETAIL, lignes, bilan, entete);
   telecharger(blob, 'suivi-assiduite-'+f.debut+'-au-'+f.fin+'.docx');
+}
+
+/* ---------- Export des emplois du temps (Word & Excel) ---------- */
+function nomEnseignant(id){ const e = DATA.enseignants.find(x=>x.id===id); return e ? e.nom : ''; }
+function dureeHeures(min){ const h = Math.floor(min/60), m = min%60; return h+' h'+(m?(' '+String(m).padStart(2,'0')):''); }
+function slugFichier(t){
+  return String(t||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-zA-Z0-9]+/g,'-').replace(/^-+|-+$/g,'').toLowerCase() || 'edt';
+}
+/* Grille jours × horaires à partir d'un filtre de créneaux et d'une fonction de mise en forme des cellules */
+function construireGrilleEDT(filtre, formaterCellule){
+  const entrees = DATA.emploiDuTemps.filter(l=>!l.deleted && filtre(l));
+  const jours = JOURS_ECOLE.filter(j=> j!=='Samedi' || entrees.some(l=>l.jour===j));
+  const lignes = [];
+  let finPrec = null;
+  HORAIRES_FIXES.forEach(([d,f])=>{
+    if(finPrec && enMinutes(d) > enMinutes(finPrec)){
+      lignes.push({type:'pause', debut:finPrec, fin:d, label: enMinutes(finPrec)>=12*60 ? 'Pause déjeuner' : 'Récréation'});
+    }
+    const cells = jours.map(j=>{
+      const es = entrees.filter(l=>l.jour===j && l.heureDebut===d).sort((a,b)=>(a.rang||0)-(b.rang||0));
+      return formaterCellule(es);
+    });
+    lignes.push({type:'cours', debut:d, fin:f, cells});
+    finPrec = f;
+  });
+  return {entrees, jours, lignes};
+}
+function sectionClasse(cl){
+  const cycle = DATA.cycles.find(c=>c.id===cl.cycleId);
+  const g = construireGrilleEDT(l=>l.classeId===cl.id, es=>{
+    const out = [], mixte = es.length>1;
+    es.forEach((e,i)=>{
+      if(i>0) out.push({t:'', g:false});
+      const lib = mixte ? ((e.groupe && e.groupe.trim()) ? e.groupe.trim() : 'Groupe '+((e.rang||0)+1)) : '';
+      out.push({t:(lib?lib+' : ':'')+(e.matiere||'—'), g:true});
+      const ens = nomEnseignant(e.enseignantId);
+      if(ens) out.push({t:ens, g:false});
+    });
+    return out;
+  });
+  const sous = [];
+  if(DATA.meta.etablissement) sous.push(DATA.meta.etablissement);
+  if(cycle) sous.push('Cycle : '+cycle.nom);
+  return {titre:'Emploi du temps — '+cl.nom, feuille:cl.nom, sous, jours:g.jours, lignes:g.lignes, vide:!g.entrees.length,
+    note:'Document édité le '+fmtDateCourte(todayStr())};
+}
+function sectionEnseignant(ens){
+  const g = construireGrilleEDT(l=>l.enseignantId===ens.id, es=>{
+    const out = [];
+    es.forEach((e,i)=>{
+      if(i>0) out.push({t:'', g:false});
+      out.push({t:e.matiere||'—', g:true});
+      const cl = DATA.classes.find(c=>c.id===e.classeId);
+      const lib = libelleGroupe(e);
+      out.push({t:(cl?cl.nom:'Classe ?')+(lib?' ('+lib+')':''), g:false});
+    });
+    return out;
+  });
+  const minutes = g.entrees.reduce((t,l)=> t + Math.max(0,(enMinutes(l.heureFin)||0)-(enMinutes(l.heureDebut)||0)), 0);
+  const sous = [];
+  if(DATA.meta.etablissement) sous.push(DATA.meta.etablissement);
+  sous.push('Volume horaire hebdomadaire : '+dureeHeures(minutes)+' ('+g.entrees.length+' créneau'+(g.entrees.length>1?'x':'')+')');
+  return {titre:'Emploi du temps — '+ens.nom, feuille:ens.nom, sous, jours:g.jours, lignes:g.lignes, vide:!g.entrees.length,
+    note:'Document édité le '+fmtDateCourte(todayStr())};
+}
+
+/* ----- Word ----- */
+function wCelluleLignes(lignes, largeur, opts){
+  opts = opts || {};
+  const paras = (lignes && lignes.length ? lignes : [{t:'', g:false}]).map(x=> wParagraphe(x.t, {taille:19, apres:0, gras:!!x.g, centre:true}));
+  return '<w:tc><w:tcPr><w:tcW w:w="'+largeur+'" w:type="dxa"/>'+(opts.fond?'<w:shd w:val="clear" w:color="auto" w:fill="'+opts.fond+'"/>':'')+
+    (opts.span?'<w:gridSpan w:val="'+opts.span+'"/>':'')+'<w:vAlign w:val="center"/></w:tcPr>'+paras.join('')+'</w:tc>';
+}
+function construireDocxEDT(sections, img){
+  const L = 15398;
+  const bord = ['top','left','bottom','right','insideH','insideV'].map(b=>'<w:'+b+' w:val="single" w:sz="4" w:space="0" w:color="808080"/>').join('');
+  let corps = '';
+  sections.forEach((sec, idx)=>{
+    if(img) corps += xmlEntete(img, idx+1);
+    corps += wParagraphe(sec.titre, {gras:true, taille:32, couleur:'1E3A5F', apres:80, centre:true});
+    sec.sous.forEach(t=>{ corps += wParagraphe(t, {taille:21, apres:40, centre:true}); });
+    corps += wParagraphe('', {apres:80});
+    const n = sec.jours.length, c0 = 1500, cw = Math.floor((L-c0)/n);
+    const largeurs = [c0].concat(sec.jours.map((_,i)=> i===n-1 ? L-c0-cw*(n-1) : cw));
+    let tbl = '<w:tbl><w:tblPr><w:tblW w:w="'+L+'" w:type="dxa"/><w:tblBorders>'+bord+'</w:tblBorders><w:tblLayout w:type="fixed"/>'+
+      '<w:tblCellMar><w:top w:w="50" w:type="dxa"/><w:left w:w="80" w:type="dxa"/><w:bottom w:w="50" w:type="dxa"/><w:right w:w="80" w:type="dxa"/></w:tblCellMar></w:tblPr>'+
+      '<w:tblGrid>'+largeurs.map(w=>'<w:gridCol w:w="'+w+'"/>').join('')+'</w:tblGrid>';
+    const enteteCell = (txt, w)=> '<w:tc><w:tcPr><w:tcW w:w="'+w+'" w:type="dxa"/><w:shd w:val="clear" w:color="auto" w:fill="1E3A5F"/><w:vAlign w:val="center"/></w:tcPr>'+
+      wParagraphe(txt, {gras:true, couleur:'FFFFFF', taille:20, apres:0, centre:true})+'</w:tc>';
+    tbl += '<w:tr><w:trPr><w:cantSplit/><w:tblHeader/></w:trPr>'+enteteCell('Horaire', largeurs[0])+sec.jours.map((j,i)=>enteteCell(j, largeurs[i+1])).join('')+'</w:tr>';
+    sec.lignes.forEach(r=>{
+      const horaire = [{t:r.debut+' – '+r.fin, g:true}];
+      if(r.type==='pause'){
+        tbl += '<w:tr><w:trPr><w:cantSplit/></w:trPr>'+wCelluleLignes(horaire, largeurs[0], {fond:'E8F0FA'})+
+          wCelluleLignes([{t:r.label, g:false}], L-largeurs[0], {fond:'F3F4F6', span:n})+'</w:tr>';
+      } else {
+        tbl += '<w:tr><w:trPr><w:cantSplit/><w:trHeight w:val="540" w:hRule="atLeast"/></w:trPr>'+wCelluleLignes(horaire, largeurs[0], {fond:'E8F0FA'})+
+          r.cells.map((c,i)=>wCelluleLignes(c, largeurs[i+1])).join('')+'</w:tr>';
+      }
+    });
+    tbl += '</w:tbl>';
+    corps += tbl;
+    let pn = wParagraphe(sec.note || '', {taille:16, avant:120, couleur:'666666'});
+    if(idx < sections.length-1) pn = pn.replace(/<\/w:p>$/, '<w:r><w:br w:type="page"/></w:r></w:p>');
+    corps += pn;
+  });
+  const sect = '<w:sectPr><w:pgSz w:w="16838" w:h="11906" w:orient="landscape"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720" w:header="400" w:footer="400" w:gutter="0"/></w:sectPr>';
+  const documentXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"><w:body>'+corps+sect+'</w:body></w:document>';
+  const contentTypes = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'+
+    '<Default Extension="xml" ContentType="application/xml"/><Default Extension="png" ContentType="image/png"/>'+
+    '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>';
+  const rels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>';
+  const docRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'+
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+    (img ? '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="media/entete.png"/>' : '')+
+    '</Relationships>';
+  const fichiers = [
+    {nom:'[Content_Types].xml', contenu:contentTypes}, {nom:'_rels/.rels', contenu:rels},
+    {nom:'word/_rels/document.xml.rels', contenu:docRels}, {nom:'word/document.xml', contenu:documentXml}
+  ];
+  if(img) fichiers.push({nom:'word/media/entete.png', contenu:img.buf});
+  return creerZip(fichiers, 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+}
+/* Entête : /entete.png s'il existe, sinon le logo de l'application (icon-192.png) en petit format centré */
+async function chargerEnteteEDT(){
+  const b = await chargerEntete();
+  if(b) return {buf:b, dim:ENTETE_COLLEGE_DIM, maxCy:null};
+  try{
+    const rep = await fetch('/icon-192.png');
+    if(rep.ok){
+      const buf = new Uint8Array(await rep.arrayBuffer());
+      if(buf.length>24 && buf[0]===0x89 && buf[1]===0x50){
+        const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+        return {buf, dim:{w:dv.getUint32(16), h:dv.getUint32(20)}, maxCy:1000};
+      }
+    }
+  }catch(e){}
+  return null;
+}
+
+/* ----- Excel (.xlsx), généré sans bibliothèque ----- */
+function nomFeuilleUnique(nom, pris){
+  let base = String(nom||'Feuille').replace(/[\[\]:*?\/\\]/g,'-').trim().slice(0,31) || 'Feuille';
+  let n = base, i = 2;
+  while(pris.has(n.toLowerCase())){ const suf = ' ('+(i++)+')'; n = base.slice(0,31-suf.length)+suf; }
+  pris.add(n.toLowerCase());
+  return n;
+}
+function construireXlsxEDT(sections){
+  const E = xmlEchap, col = i => String.fromCharCode(65+i);
+  const ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"';
+  const txt = (ref, v, st)=> v===''||v==null ? '<c r="'+ref+'" s="'+st+'"/>' : '<c r="'+ref+'" s="'+st+'" t="inlineStr"><is><t xml:space="preserve">'+E(v)+'</t></is></c>';
+  const pris = new Set(), feuilles = [];
+  sections.forEach(sec=>{
+    const n = sec.jours.length, derniere = col(n);
+    let rang = 1, rows = '', fusions = [];
+    const ligne = (cellules, ht)=>{ const r = '<row r="'+rang+'"'+(ht?' ht="'+ht+'" customHeight="1"':'')+'>'+cellules+'</row>'; rang++; return r; };
+    const lignePleine = (v, st, ht)=>{
+      let c = txt('A'+rang, v, st); for(let i=1;i<=n;i++) c += txt(col(i)+rang, '', st);
+      fusions.push('A'+rang+':'+derniere+rang);
+      return ligne(c, ht);
+    };
+    rows += lignePleine(sec.titre, 1, 24);
+    sec.sous.forEach(t=>{ rows += lignePleine(t, 6); });
+    rows += ligne('');
+    rows += ligne(txt('A'+rang,'Horaire',2) + sec.jours.map((j,i)=>txt(col(i+1)+rang, j, 2)).join(''), 22);
+    sec.lignes.forEach(r=>{
+      const horaire = r.debut+' – '+r.fin;
+      if(r.type==='pause'){
+        let c = txt('A'+rang, horaire, 4) + txt('B'+rang, r.label, 5);
+        for(let i=2;i<=n;i++) c += txt(col(i)+rang, '', 5);
+        if(n>1) fusions.push('B'+rang+':'+derniere+rang);
+        rows += ligne(c, 20);
+      } else {
+        const textes = r.cells.map(c=>c.map(x=>x.t).join('\n'));
+        const nbLig = Math.max.apply(null, [1].concat(r.cells.map(c=>c.length)));
+        rows += ligne(txt('A'+rang, horaire, 4) + textes.map((t,i)=>txt(col(i+1)+rang, t, 3)).join(''), Math.max(32, nbLig*16+8));
+      }
+    });
+    rows += ligne('');
+    rows += lignePleine(sec.note || '', 7);
+    const cols = '<cols><col min="1" max="1" width="16" customWidth="1"/><col min="2" max="'+(n+1)+'" width="26" customWidth="1"/></cols>';
+    const xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet '+ns+'><sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>'+
+      '<sheetViews><sheetView workbookViewId="0" showGridLines="0"/></sheetViews><sheetFormatPr defaultRowHeight="15"/>'+cols+
+      '<sheetData>'+rows+'</sheetData>'+(fusions.length?'<mergeCells count="'+fusions.length+'">'+fusions.map(m=>'<mergeCell ref="'+m+'"/>').join('')+'</mergeCells>':'')+
+      '<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.3" footer="0.3"/><pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0"/></worksheet>';
+    feuilles.push({nom:nomFeuilleUnique(sec.feuille||sec.titre, pris), xml});
+  });
+  const styles = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet '+ns+'>'+
+    '<fonts count="5"><font><sz val="11"/><name val="Calibri"/></font>'+
+    '<font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Calibri"/></font>'+
+    '<font><b/><sz val="16"/><color rgb="FF1E3A5F"/><name val="Calibri"/></font>'+
+    '<font><i/><sz val="11"/><color rgb="FF555555"/><name val="Calibri"/></font>'+
+    '<font><b/><sz val="11"/><name val="Calibri"/></font></fonts>'+
+    '<fills count="5"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill>'+
+    '<fill><patternFill patternType="solid"><fgColor rgb="FF1E3A5F"/><bgColor indexed="64"/></patternFill></fill>'+
+    '<fill><patternFill patternType="solid"><fgColor rgb="FFE8F0FA"/><bgColor indexed="64"/></patternFill></fill>'+
+    '<fill><patternFill patternType="solid"><fgColor rgb="FFF3F4F6"/><bgColor indexed="64"/></patternFill></fill></fills>'+
+    '<borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border>'+
+    '<border><left style="thin"><color rgb="FF808080"/></left><right style="thin"><color rgb="FF808080"/></right><top style="thin"><color rgb="FF808080"/></top><bottom style="thin"><color rgb="FF808080"/></bottom><diagonal/></border></borders>'+
+    '<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'+
+    '<cellXfs count="8">'+
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>'+
+    '<xf numFmtId="0" fontId="2" fillId="0" borderId="0" xfId="0" applyFont="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'+
+    '<xf numFmtId="0" fontId="1" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>'+
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>'+
+    '<xf numFmtId="0" fontId="4" fillId="3" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'+
+    '<xf numFmtId="0" fontId="3" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center"/></xf>'+
+    '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment horizontal="center"/></xf>'+
+    '<xf numFmtId="0" fontId="3" fillId="0" borderId="0" xfId="0" applyFont="1"/></cellXfs></styleSheet>';
+  const wb = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook '+ns+' xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>'+
+    feuilles.map((f,i)=>'<sheet name="'+E(f.nom)+'" sheetId="'+(i+1)+'" r:id="rId'+(i+1)+'"/>').join('')+'</sheets></workbook>';
+  const wbRels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+    feuilles.map((f,i)=>'<Relationship Id="rId'+(i+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet'+(i+1)+'.xml"/>').join('')+
+    '<Relationship Id="rId'+(feuilles.length+1)+'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>';
+  const ct = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'+
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>'+
+    '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'+
+    '<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'+
+    feuilles.map((f,i)=>'<Override PartName="/xl/worksheets/sheet'+(i+1)+'.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>').join('')+'</Types>';
+  const rels = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'+
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>';
+  const fichiers = [
+    {nom:'[Content_Types].xml', contenu:ct}, {nom:'_rels/.rels', contenu:rels},
+    {nom:'xl/workbook.xml', contenu:wb}, {nom:'xl/_rels/workbook.xml.rels', contenu:wbRels}, {nom:'xl/styles.xml', contenu:styles}
+  ].concat(feuilles.map((f,i)=>({nom:'xl/worksheets/sheet'+(i+1)+'.xml', contenu:f.xml})));
+  return creerZip(fichiers, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+}
+
+/* ----- Orchestration ----- */
+async function exporterEDT(format){
+  const sel = document.getElementById('selPorteeEDT');
+  const selCl = document.getElementById('selClasseEDT');
+  if(!sel) return;
+  const portee = sel.value;
+  const classes = DATA.classes.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
+  const enseignants = DATA.enseignants.filter(x=>!x.deleted).sort((a,b)=>a.nom.localeCompare(b.nom));
+  let sections = [], nomBase = 'emploi-du-temps';
+  if(portee==='classe'){
+    const cl = classes.find(c=>c.id===(selCl && selCl.value));
+    if(cl){ sections = [sectionClasse(cl)]; nomBase += '-'+slugFichier(cl.nom); }
+  } else if(portee==='classes'){
+    sections = classes.map(sectionClasse).filter(s=>!s.vide); nomBase += '-classes';
+  } else if(portee==='enstous'){
+    sections = enseignants.map(sectionEnseignant).filter(s=>!s.vide); nomBase += '-enseignants';
+  } else if(portee.indexOf('ens:')===0){
+    const ens = enseignants.find(e=>e.id===portee.slice(4));
+    if(ens){ sections = [sectionEnseignant(ens)]; nomBase += '-'+slugFichier(ens.nom); }
+  }
+  if(!sections.length){ alert("Aucun créneau à exporter : renseignez d'abord l'emploi du temps."); return; }
+  const btn = document.getElementById(format==='word' ? 'btnEdtWord' : 'btnEdtExcel');
+  if(btn) btn.disabled = true;
+  try{
+    if(format==='word'){
+      const img = await chargerEnteteEDT();
+      telecharger(construireDocxEDT(sections, img), nomBase+'.docx');
+    } else {
+      telecharger(construireXlsxEDT(sections), nomBase+'.xlsx');
+    }
+  }catch(e){
+    console.error(e);
+    alert("L'export a échoué : "+(e && e.message ? e.message : e));
+  }finally{
+    if(btn) btn.disabled = false;
+  }
 }
 
 /* ---------- Démarrage ---------- */
