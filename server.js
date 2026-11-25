@@ -7,6 +7,7 @@ const express = require('express');
 const path = require('path');
 const { MongoClient } = require('mongodb');
 const bcrypt = require('bcryptjs');
+const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
 const MONGODB_URI = process.env.MONGODB_URI;
@@ -18,12 +19,18 @@ if (!MONGODB_URI) {
 }
 
 const app = express();
+app.set('trust proxy', 1); // derrière le proxy de l'hébergeur : vraie adresse IP du client
 app.use(express.json({ limit: '25mb' }));
 app.use((req, res, next) => {
   console.log(new Date().toISOString(), req.method, req.path);
   next();
 });
-app.use(express.static(path.join(__dirname, 'public')));
+// La page et le service worker ne doivent jamais rester figés dans le cache du navigateur
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res, fichier) => {
+    if (/(service-worker\.js|index\.html|manifest\.json)$/.test(fichier)) res.setHeader('Cache-Control', 'no-cache');
+  }
+}));
 
 let collection;
 let baseDonnees;
@@ -72,11 +79,29 @@ function fusionnerDonnees(local, distant) {
 }
 
 /* ---------- Vérification du code d'accès ---------- */
+function egalSecurise(a, b) {
+  const ha = crypto.createHash('sha256').update(String(a)).digest();
+  const hb = crypto.createHash('sha256').update(String(b)).digest();
+  return crypto.timingSafeEqual(ha, hb);
+}
+/* Limite les essais de mot de passe CPE : 8 échecs / 10 min par adresse IP et profil */
+const ECHECS_CONNEXION = new Map();
+function connexionBloquee(cle) {
+  const e = ECHECS_CONNEXION.get(cle);
+  if (!e) return false;
+  if (Date.now() - e.debut > 10 * 60 * 1000) { ECHECS_CONNEXION.delete(cle); return false; }
+  return e.nb >= 8;
+}
+function noterEchec(cle) {
+  const e = ECHECS_CONNEXION.get(cle);
+  if (!e || Date.now() - e.debut > 10 * 60 * 1000) ECHECS_CONNEXION.set(cle, { nb: 1, debut: Date.now() });
+  else e.nb++;
+}
 function verifierCode(req, res, next) {
   if (!ACCESS_CODE) return next();
   const code = req.get('x-access-code') || '';
-  if (code !== ACCESS_CODE) {
-    console.warn('Code d\'accès refusé pour', req.path, '— reçu:', JSON.stringify(code));
+  if (!egalSecurise(code, ACCESS_CODE)) {
+    console.warn('Code d\'accès refusé pour', req.path); // le code saisi n'est plus écrit dans les journaux
     return res.status(401).json({ erreur: 'Code d\'accès invalide.' });
   }
   next();
@@ -129,15 +154,18 @@ app.get('/api/data', verifierCode, async (req, res) => {
    Solution : verrou optimiste (champ "version"). Si quelqu'un a écrit entre-temps, on relit,
    on refusionne et on réessaie, donc aucune modification n'est perdue. */
 let derniereSauvegardeHistorique = 0;
+// Copie de sécurité : au plus toutes les 6 heures, on garde seulement les 3 dernières
+// (avant : toutes les 10 minutes, 50 copies complètes -> c'est ce qui remplissait la base).
+const HISTORIQUE_INTERVALLE_MS = 6 * 60 * 60 * 1000;
+const HISTORIQUE_A_GARDER = 3;
 async function archiverSiBesoin(doc) {
-  // Copie de sécurité au plus toutes les 10 minutes, on garde les 50 dernières.
-  if (!doc || Date.now() - derniereSauvegardeHistorique < 10 * 60 * 1000) return;
+  if (!doc || Date.now() - derniereSauvegardeHistorique < HISTORIQUE_INTERVALLE_MS) return;
   derniereSauvegardeHistorique = Date.now();
   try {
     const { _id, ...contenu } = doc;
     const histo = baseDonnees.collection('historique');
     await histo.insertOne({ date: new Date(), contenu });
-    const anciens = await histo.find({}, { projection: { _id: 1 } }).sort({ date: -1 }).skip(50).toArray();
+    const anciens = await histo.find({}, { projection: { _id: 1 } }).sort({ date: -1 }).skip(HISTORIQUE_A_GARDER).toArray();
     if (anciens.length) await histo.deleteMany({ _id: { $in: anciens.map(x => x._id) } });
   } catch (e) { console.warn('Archivage impossible', e.message); }
 }
@@ -205,6 +233,10 @@ app.post('/api/cpe/mot-de-passe', verifierCode, async (req, res) => {
 app.post('/api/cpe/connexion', verifierCode, async (req, res) => {
   try {
     const { cpeId, motDePasse } = req.body || {};
+    const cleEssai = req.ip + '|' + cpeId;
+    if (connexionBloquee(cleEssai)) {
+      return res.status(429).json({ erreur: 'Trop de tentatives. Réessayez dans quelques minutes.' });
+    }
     let doc = await collection.findOne({ _id: 'suivi' });
     const cpe = doc && (doc.cpes || []).find(c => c.id === cpeId);
     if (!cpe) return res.status(404).json({ erreur: 'Profil introuvable.' });
@@ -212,7 +244,8 @@ app.post('/api/cpe/connexion', verifierCode, async (req, res) => {
       return res.status(403).json({ erreur: "Aucun mot de passe défini pour ce profil. Demandez à un CPE de le définir dans Configuration → CAE & CPE." });
     }
     const ok = bcrypt.compareSync(motDePasse || '', cpe.motDePasseHash);
-    if (!ok) return res.status(403).json({ erreur: 'Mot de passe incorrect.' });
+    if (!ok) { noterEchec(cleEssai); return res.status(403).json({ erreur: 'Mot de passe incorrect.' }); }
+    ECHECS_CONNEXION.delete(cleEssai);
     res.json({ ok: true });
   } catch (e) {
     console.error(e);
@@ -221,7 +254,9 @@ app.post('/api/cpe/connexion', verifierCode, async (req, res) => {
 });
 
 // Toute autre route renvoie la page principale (utile si on ajoute des routes côté client plus tard)
-app.get('*', (req, res) => {
+// (compatible Express 4 et 5 : la syntaxe app.get('*') n'existe plus en Express 5 et empêchait le serveur de démarrer)
+app.use((req, res, next) => {
+  if (req.method !== 'GET') return next();
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
